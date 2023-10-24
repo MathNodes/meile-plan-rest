@@ -18,7 +18,10 @@ components:
       type: "array"
       items:
         $ref: "#/components/schemas/Subscription"
-         
+    WalletAddress:
+      type: "string"
+      example: "sent14f3dy3qvl3tyg7helzy37amgwuf3qeh6t8pch8" 
+          
     Plan:
       type: "object"
       properties:
@@ -101,7 +104,7 @@ paths:
           name: walletAddress
           required: true
           schema:
-            type: string
+            $ref: "#/components/schemas/WalletAddress"
           description: The user Sentinel wallet address
       responses:
         "200":
