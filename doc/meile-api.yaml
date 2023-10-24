@@ -96,7 +96,13 @@ paths:
   /subscription/{walletAddress}:
     get:
       description: "Get current Meile subscriptions via Sentinel wallet address"
-      parameters: []
+      parameters: 
+        - in: path
+          name: walletAddress
+          required: true
+          schema:
+            type: string
+          description: The user Sentinel wallet address
       responses:
         "200":
           description: "OK"

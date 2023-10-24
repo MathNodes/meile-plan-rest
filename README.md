@@ -2,4 +2,4 @@
 Meile Subscription Plan REST API
 
 # Documentation
-https://petstore.swagger.io/?url=https://path/to/file.yaml
+https://petstore.swagger.io/?url=https://raw.githubusercontent.com/MathNodes/meile-plan-rest/main/doc/meile-api.yaml
