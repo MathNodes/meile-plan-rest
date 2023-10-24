@@ -1,0 +1,117 @@
+openapi: "3.0.2"
+info:
+  title: API Title
+  version: "1.0"
+servers:
+  - url: https://meile.api.mathnodes.com/v1/
+components:
+  securitySchemes:
+    name:
+      type: "http"
+      scheme: "basic"
+  schemas:
+    Plans:
+      type: "array"
+      items:
+        $ref: "#/components/schemas/Plan"
+    Subscriptions:
+      type: "array"
+      items:
+        $ref: "#/components/schemas/Subscription"
+         
+    Plan:
+      type: "object"
+      properties:
+        uuid: 
+          type: "string"
+          example: "6db9ac96-6222-4539-bfd8-440a2bf75948"
+        subscription_id:
+          type: "int"
+          format: "int64"
+          example: "314159"
+        plan_id:
+          type: "int"
+          format: "int64"
+          example: "11828"
+        plan_name:
+          type: "string"
+          example: "Meile Residential Subscription Plan"
+        plan_price:
+          type: "int"
+          format: "int64"
+          example: "15000"
+        plan_denom:
+          type: "string"
+          example: "dvpn"
+    
+    Subscription:
+      type: "object"
+      properties:
+        id: 
+          type: "int"
+          format: "int64"
+          example: "31415"
+        uuid: 
+          type: "string"
+          example: "6db9ac96-6222-4539-bfd8-440a2bf75948"  
+        subscription_id:
+          type: "int"
+          format: "int64"
+          example: "314159"
+        plan_id:
+          type: "int"
+          format: "int64"
+          example: "11828"
+        amt_paid:
+          type: "float"
+          example: "15252.14"
+        amt_denom:
+          type: "string"
+          example: "dvpn"
+        subscribe_date:
+          type: "string"
+          example: "2023-09-25 01:02:18"    
+        subscribe_duration:
+          type: "int"
+          example: "6"   
+paths:
+  /test:
+    get:
+      responses:
+        '200':
+          description: OK
+  /plans:
+    get:
+      summary: "Get current Meile Subscription Plans"
+      description: "Get Meile Subscription Plans from Plan DB"
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plans"        
+                
+  /subscription/{walletAddress}:
+    get:
+      description: "Get current Meile subscriptions via Sentinel wallet address"
+      parameters: []
+      responses:
+        "200":
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscriptions"
+  /add:
+    post:
+      description: ""
+      parameters: []
+      responses:
+        "200":
+          description: "OK"
+            
+security:
+- BasicAuth: []
+
