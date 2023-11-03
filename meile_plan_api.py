@@ -17,6 +17,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import scrtxxs
 
+
 VERSION=20231024.0250
 
 app = Flask(__name__)
@@ -28,9 +29,9 @@ mysql.init_app(app)
 HotWalletAddress = scrtxxs.WalletAddress
 keyring_passphrase = scrtxxs.HotWalletPW
 
-DBdir = '/home/' + str(pwd.getpwuid(os.getuid())[0]) + '/dbs'
-WalletLogDIR = '/home/' + str(pwd.getpwuid(os.getuid())[0]) + '/Logs'
-DBFile = 'sqlite:///' + DBdir + '/dvpn_stripe.sqlite'
+DBdir = scrtxxs.dbDIR
+WalletLogDIR = scrtxxs.LogDIR
+DBFile = 'sqlite:///' + DBdir + '/meile_plan.sqlite'
 
 
 # SQLAlchemy Configurations
@@ -130,16 +131,137 @@ def GetDBCursor():
     conn = mysql.connect()
     return conn.cursor()
     
+def GetPlanCostDenom(uuid):
+    
+    query = "SELECT plan_price, plan_denom FROM meile_plans;"
+    
+    c = GetDBCursor()
+    c.execute(query)
+    plan411 = c.fetchone()
+    
+    return plan411['plan_price'], plan411['plan_denom']
+
+def CheckRenewalStatus(subid, wallet):
+    
+    query = f"SELECT subscription_id, subscription_date FROM meile_subscriptions WHERE wallet={wallet} AND subscription_id = {subid}"
+    c = GetDBCursor()
+    c.execute(query)
+    
+    results = c.fetchone()
+    
+    if results['subscription_date'] and results['subscription_id']:
+        return True,results['subscription_date']
+    else: 
+        return False, None          
+    
 @app.route('/v1/add', methods=['POST'])
 @auth.login_required
 def add_wallet_to_plan():
-    wallet    = request.json.get('wallet')
-    plan_uuid = request.json.get('uuid')     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
-    duration  = request.json.get('duration') # duration of plan subscription, in months
-    sub_id    = request.json.get('subid')
+    status  = False
+    renewal = False
+    try: 
+        wallet    = request.json.get('wallet')
+        plan_id   = int(request.json.get('planid'))     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
+        duration  = int(request.json.get('duration'))   # duration of plan subscription, in months
+        sub_id    = int(request.json.get('subid'))      # subscription ID of plan
+        uuid      = request.json.get('uuid')            # uuid of subscription
+        amt_paid  = int(request.json.get('amt'))
+        denom     = int(request.json.get('denom'))
+    except Exception as e:
+        print(str(e))
+        status = False
+        tx = None
+        message = "Not all POST values were present. Please try submitting your request again."
+        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : None}
+        print(PlanTX)
+        return jsonify(PlanTX)    
+    
+    cost, denom = GetPlanCostDenom(uuid)
+    
+    if not cost or not denom:
+        status = False
+        message = "No plan found in Database. Wallet not added to non-existing plan"
+        tx = "None"
+        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : None}
+        print(PlanTX)
+        return jsonify(PlanTX)
+    
+    renewal,subscription_date = CheckRenewalStatus(sub_id, wallet) 
     
     now = datetime.now()
-    plan_expirary = now + relativedelta(months=+duration)
+    expires = now + relativedelta(months=+duration)
+    
+    
+    WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log")
+    add_to_plan_cmd = '%s tx vpn subscription allocate --from "%s" --gas-prices "0.3udvpn" --node "%s" --keyring-dir "%s" --keyring-backend "file" --chain-id "%s" --yes %s "%s" %d' % (scrtxxs.sentinelhub,
+                                                                                                                                                                      scrtxxs.WalletName,
+                                                                                                                                                                      scrtxxs.RPC,
+                                                                                                                                                                      scrtxxs.KeyringDIR,
+                                                                                                                                                                      scrtxxs.CHAINID,
+                                                                                                                                                                      sub_id,
+                                                                                                                                                                      wallet,
+                                                                                                                                                                      scrtxxs.BYTES)
+    
+    
+    
+    
+    print(add_to_plan_cmd)
+    try: 
+        ofile = open(WalletLogFile, 'ab+')
+        
+        child = pexpect.run(add_to_plan_cmd)
+        child.logfile = ofile
+        
+        child.expect("Enter .*")
+        child.sendline(keyring_passphrase)
+        child.expect(pexpect.EOF)
+        
+        
+        ofile.flush()
+        ofile.close()
+        ofile.close()
+        with open(WalletLogFile ,'r+') as rfile:
+            last_line = rfile.readlines()[-1]
+            if 'txhash' in last_line:
+                tx = last_line.split(':')[-1].rstrip().lstrip()
+                print(f"{wallet} added to plan: {sub_id}, plan_id: {plan_id}, {duration} months, hash: {tx}")
+            else:
+                tx = 'none'
+        
+        rfile.close()
+        status = True
+        message = "Success."
+    except Exception as e:
+        print(str(e))
+        status = False
+        message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."
+        expires = None
+    if renewal and subscription_date is not None:
+        query = '''
+                UPDATE meile_subscriptions 
+                SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %d, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s"
+                WHERE wallet = "%s" AND subscription_id = %d
+                ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, sub_id) 
+                
+    else:
+        query = '''
+                INSERT INTO meile_subscriptions (uuid, wallet, subscription_id, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration, expires)
+                VALUES("%s", "%s", %d, %d, %d, "%s", "%s", %d, "%s")
+                ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, str(now), duration, str(expires)) 
+
+
+    print("Updating Subscription Table...")
+    try:
+        UpdateDBTable(query)    
+    except Exception as e:
+        print(str(e))
+        status = False
+        message = "Error updating subscription table. Please contact support@mathnodes.com for more information."
+        tx = None
+        expires = None
+        
+    PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
+    return jsonify(PlanTX)
     
     
 @app.route('/v1/plans', methods=['GET'])
