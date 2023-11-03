@@ -21,7 +21,6 @@ components:
     WalletAddress:
       type: "string"
       example: "sent14f3dy3qvl3tyg7helzy37amgwuf3qeh6t8pch8" 
-      
     AddData:
       type: "object"
       properties:
@@ -104,7 +103,6 @@ components:
         plan_denom:
           type: "string"
           example: "dvpn"
-    
     Subscription:
       type: "object"
       properties:
