@@ -160,13 +160,14 @@ def add_wallet_to_plan():
     status  = False
     renewal = False
     try: 
-        wallet    = request.json.get('wallet')
-        plan_id   = int(request.json.get('planid'))     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
-        duration  = int(request.json.get('duration'))   # duration of plan subscription, in months
-        sub_id    = int(request.json.get('subid'))      # subscription ID of plan
-        uuid      = request.json.get('uuid')            # uuid of subscription
-        amt_paid  = int(request.json.get('amt'))
-        denom     = int(request.json.get('denom'))
+        JSON      = request.json
+        wallet    = JSON['data']['wallet']
+        plan_id   = int(JSON['data']['planid'])     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
+        duration  = int(JSON['data']['duration'])   # duration of plan subscription, in months
+        sub_id    = int(JSON['data']['subid'])      # subscription ID of plan
+        uuid      = JSON['data']['uuid']            # uuid of subscription
+        amt_paid  = int(JSON['data']['amt'])
+        denom     = int(JSON['data']['denom'])
     except Exception as e:
         print(str(e))
         status = False
