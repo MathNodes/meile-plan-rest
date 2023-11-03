@@ -21,7 +21,65 @@ components:
     WalletAddress:
       type: "string"
       example: "sent14f3dy3qvl3tyg7helzy37amgwuf3qeh6t8pch8" 
-          
+      
+    AddData:
+      type: "object"
+      properties:
+        wallet:
+          type: "string"
+          example: "sent14f3dy3qvl3tyg7helzy37amgwuf3qeh6t8pch8"
+        plan_id:
+          type: "int"
+          format: "int64"
+          example: "1123"
+        duration:
+          type: "int"
+          format: "int64"
+          example: "3"
+        sub_id:
+          type: "int"
+          format: "int64"
+          example: "31337"
+        uuid:
+          type: "string"
+          example: "6db9ac96-6222-4539-bfd8-440a2bf75948"
+        amt_paid:
+          type: "int"
+          format: "int64"
+          example: "29325000000"
+        denom:
+          type: "string"
+          example: "XMR"  
+    AddResponse:
+      type: "object"
+      properties:      
+        status:
+          type: "boolean"
+          example: "True"
+        wallet:
+          type: "string"
+          example: "sent14f3dy3qvl3tyg7helzy37amgwuf3qeh6t8pch8"
+        plan_id:
+          type: "int"
+          format: "int64"
+          example: "31337"
+        sub_id:
+          type: "int"
+          format: "int64"
+          example: "1123"
+        duration:
+          type: "int"
+          format: "int64"
+          example: "3"
+        tx:
+          type: "string"
+          example: "F9F219ECBEC6FAE03B30C21664AE227317587B278B21BAFEDFEC6918CABB6F78"
+        message:
+          type: "string"
+          example: "Success."
+        expires: 
+          type: "string"
+          example: "2023-12-25 01:02:18"
     Plan:
       type: "object"
       properties:
@@ -56,7 +114,10 @@ components:
           example: "31415"
         uuid: 
           type: "string"
-          example: "6db9ac96-6222-4539-bfd8-440a2bf75948"  
+          example: "6db9ac96-6222-4539-bfd8-440a2bf75948"
+        wallet:
+          type: "string"
+          example: "sent14f3dy3qvl3tyg7helzy37amgwuf3qeh6t8pch8"  
         subscription_id:
           type: "int"
           format: "int64"
@@ -76,7 +137,10 @@ components:
           example: "2023-09-25 01:02:18"    
         subscribe_duration:
           type: "int"
-          example: "6"   
+          example: "6"
+        expires:
+          type: "string"   
+          example: "2023-12-25 01:02:18"
 paths:
   /test:
     get:
@@ -116,10 +180,21 @@ paths:
   /add:
     post:
       description: ""
-      parameters: []
+      parameters: 
+        - in: header
+          name: data
+          required: true
+          schema:
+            $ref: "#/components/schemas/AddData"
+          description: POST data required for adding a wallet to a Meile subscription plan
       responses:
         "200":
           description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddResponse"
+              description: Data Returned on Success or Failure of adding Wallet to Meile Subscription Plan
             
 security:
 - BasicAuth: []
