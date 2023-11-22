@@ -1,8 +1,6 @@
-import pwd
 import os
 import jwt
 import time
-import stripe
 import pexpect
 
 from datetime import datetime
