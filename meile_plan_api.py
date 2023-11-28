@@ -271,9 +271,17 @@ def get_plan_subscriptions():
     c = GetDBCursor()
     c.execute(query)
 
+    rows = c.fetchall()
+    columns = [desc[0] for desc in c.description]
+    result = []
+    for row in rows:
+        row = dict(zip(columns, row))
+        result.append(row)
+
     try: 
-        return Response(jsonify(data=c.fetchall()), status=200, mimetype='application/json')
-    except:
+        return jsonify(result)
+    except Exception as e:
+        print(str(e))
         abort(404)
 
 @app.route('/v1/subscription/<walletAddress>', methods=['GET'])
