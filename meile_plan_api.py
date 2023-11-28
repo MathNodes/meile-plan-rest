@@ -16,7 +16,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import scrtxxs
 
 
-VERSION=20231024.0250
+VERSION=20231127.2043
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -42,7 +42,7 @@ app.config['SQLALCHEMY_TRACK_MODIFCATIONS'] = False
 app.config['MYSQL_DATABASE_USER'] = scrtxxs.MySQLUsername
 app.config['MYSQL_DATABASE_PASSWORD'] = scrtxxs.MySQLPassword
 app.config['MYSQL_DATABASE_DB'] = scrtxxs.MySQLDB
-app.config['MYSQL_DATABASE_HOST'] = 'localhost'
+app.config['MYSQL_DATABASE_HOST'] = scrtxxs.MySQLHost
 
 
 db = SQLAlchemy(app)
@@ -137,20 +137,23 @@ def GetPlanCostDenom(uuid):
     c.execute(query)
     plan411 = c.fetchone()
     
-    return plan411['plan_price'], plan411['plan_denom']
+    return plan411[0], plan411[1]
 
 def CheckRenewalStatus(subid, wallet):
     
-    query = f"SELECT subscription_id, subscription_date FROM meile_subscriptions WHERE wallet={wallet} AND subscription_id = {subid}"
+    query = f"SELECT subscription_id, subscribe_date FROM meile_subscriptions WHERE wallet = '{wallet}' AND subscription_id = {subid}"
     c = GetDBCursor()
     c.execute(query)
     
     results = c.fetchone()
     
-    if results['subscription_date'] and results['subscription_id']:
-        return True,results['subscription_date']
+    if results is not None:
+        if results[0] and results[1]:
+            return True,results[1]
+        else: 
+            return False, None          
     else: 
-        return False, None          
+        return False, None
     
 @app.route('/v1/add', methods=['POST'])
 @auth.login_required
@@ -160,12 +163,12 @@ def add_wallet_to_plan():
     try: 
         JSON      = request.json
         wallet    = JSON['data']['wallet']
-        plan_id   = int(JSON['data']['planid'])     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
+        plan_id   = int(JSON['data']['plan_id'])     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
         duration  = int(JSON['data']['duration'])   # duration of plan subscription, in months
-        sub_id    = int(JSON['data']['subid'])      # subscription ID of plan
+        sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
         uuid      = JSON['data']['uuid']            # uuid of subscription
         amt_paid  = int(JSON['data']['amt'])
-        denom     = int(JSON['data']['denom'])
+        denom     = JSON['data']['denom']
     except Exception as e:
         print(str(e))
         status = False
@@ -176,7 +179,7 @@ def add_wallet_to_plan():
         return jsonify(PlanTX)    
     
     cost, denom = GetPlanCostDenom(uuid)
-    
+    print(f"Cost: {cost}, denom: {denom}")
     if not cost or not denom:
         status = False
         message = "No plan found in Database. Wallet not added to non-existing plan"
@@ -208,7 +211,7 @@ def add_wallet_to_plan():
     try: 
         ofile = open(WalletLogFile, 'ab+')
         
-        child = pexpect.run(add_to_plan_cmd)
+        child = pexpect.spawn(add_to_plan_cmd)
         child.logfile = ofile
         
         child.expect("Enter .*")
@@ -235,6 +238,11 @@ def add_wallet_to_plan():
         status = False
         message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."
         expires = None
+        tx = "None"
+        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
+        print(PlanTX)
+        return jsonify(PlanTX)
+    
     if renewal and subscription_date is not None:
         query = '''
                 UPDATE meile_subscriptions 
