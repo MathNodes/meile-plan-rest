@@ -14,4 +14,5 @@ Meile Subscription Plan REST API
 `pip install -r requirements.txt`
 
 # Documentation
-https://petstore.swagger.io/?url=https://path/to/file.yaml
+
+[Swagger OpenAPI](https://petstore.swagger.io/?url=https://raw.githubusercontent.com/MathNodes/meile-plan-rest/main/doc/meile-api.yaml)
