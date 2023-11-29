@@ -313,7 +313,7 @@ def get_current_subscriber(walletAddress):
         print(str(e))
         abort(404)
         
-@app.route('/v1/nodes/<uuid>', methods=['POST'])
+@app.route('/v1/nodes/<uuid>', methods=['GET'])
 @auth.login_required
 def get_nodes(uuid):
     
