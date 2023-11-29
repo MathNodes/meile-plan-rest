@@ -14,6 +14,11 @@ components:
       type: "array"
       items:
         $ref: "#/components/schemas/Plan"
+    Nodes:
+      type: "array"
+      items:
+        type: "string"
+      example: ["sentnode143hrjwjrnyfktyc4yrdsq6nnhqya28nagwdm22", "sentnode1cwpf45cvluzty4k8t3f2h7s7y8r5rzrj7jahc2", "sentnode1dkh9wjjk00tee2rtnkxvw5t25s8yy74ehtwf6j", "sentnode1u5gk7dljfhh2cgczkvllsdh89sus5njsfs6509"]
     Subscriptions:
       type: "array"
       items:
@@ -21,6 +26,9 @@ components:
     WalletAddress:
       type: "string"
       example: "sent14f3dy3qvl3tyg7helzy37amgwuf3qeh6t8pch8" 
+    UUID: 
+      type: "string"
+      example: "6db9ac96-6222-4539-bfd8-440a2bf75948"
     AddData:
       type: "object"
       properties:
@@ -193,6 +201,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/AddResponse"
               description: Data Returned on Success or Failure of adding Wallet to Meile Subscription Plan
+  /nodes/{uuid}:
+    get:
+      description: "Get Nodes on Plan UUID"
+      parameters:
+        - in: path
+          name: uuid
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+          description: "UUID of Plan"
+      responses:
+        "200":
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nodes"
+              description: "The list of node addresses on Plan UUID."
             
 security:
 - BasicAuth: []
