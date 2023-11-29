@@ -101,14 +101,13 @@ def new_user():
     return (jsonify({'username': user.username}), 201,
             {'Location': url_for('get_user', id=user.id, _external=True)})
 
-'''
 @app.route('/api/users/<int:id>')
 def get_user(id): 
     user = User.query.get(id)
     if not user:
         abort(400)
     return jsonify({'username': user.username})
-'''
+
 @app.route('/api/token')
 @auth.login_required
 def get_auth_token():
@@ -296,7 +295,7 @@ def get_plan_subscriptions():
 @auth.login_required
 def get_current_subscriber(walletAddress):
     
-    query = f"SELECT * from meile_subscriptions WHERE wallet = {walletAddress}"
+    query = f"SELECT * from meile_subscriptions WHERE wallet = '{walletAddress}'"
     
     c = GetDBCursor()
     c.execute(query)
@@ -313,7 +312,25 @@ def get_current_subscriber(walletAddress):
     except Exception as e:
         print(str(e))
         abort(404)
+        
+@app.route('/v1/nodes/<uuid>', methods=['POST'])
+@auth.login_required
+def get_nodes(uuid):
+    
+    query = f"SELECT node_address FROM plan_nodes WHERE uuid = '{uuid}'"
 
+
+    c = GetDBCursor()
+    c.execute(query)
+    
+    result = c.fetchall()
+    
+    try:
+        return jsonify(result)
+    except Exception as e:
+        print(str(e))
+        abort(404)    
+    
 def UpdateMeileSubscriberDB():
     pass
 
