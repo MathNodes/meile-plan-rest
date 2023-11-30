@@ -1,9 +1,9 @@
 openapi: "3.0.2"
 info:
-  title: API Title
+  title: Meile Subscription Plan API
   version: "1.0"
 servers:
-  - url: https://meile.api.mathnodes.com/v1/
+  - url: https://api.meile.mathnodes.com:5000/v1/
 components:
   securitySchemes:
     name:
