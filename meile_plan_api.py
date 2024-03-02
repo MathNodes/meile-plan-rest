@@ -16,7 +16,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import scrtxxs
 
 
-VERSION=20231127.2043
+VERSION=20240302.0052
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -266,6 +266,22 @@ def add_wallet_to_plan():
         tx = None
         expires = None
         
+    transfer_cmd = '%s tx bank send --gas auto --gas-prices 0.2udvpn --gas-adjustment 2.0 --yes %s %s 1000000udvpn --node "%s"' % (scrtxxs.sentinelhub,
+                                                                                                                                   scrtxxs.WalletAddress,
+                                                                                                                                   wallet,
+                                                                                                                                   scrtxxs.RPC)
+    
+    print(transfer_cmd)
+    try: 
+        child = pexpect.spawn(transfer_cmd)
+        
+        child.expect("Enter .*")
+        child.sendline(keyring_passphrase)
+        child.expect(pexpect.EOF)    
+    except Exception as e:
+        print(str(e))
+        message = message + "Success adding wallet to plan. Error on sending 1dvpn to wallet address."
+    print(f'Successfully sent 1dvpn to: {wallet}')
     PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
     return jsonify(PlanTX)
     
