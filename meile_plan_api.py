@@ -266,7 +266,7 @@ def add_wallet_to_plan():
         tx = None
         expires = None
         
-    transfer_cmd = '%s tx bank send --gas auto --gas-prices 0.2udvpn --gas-adjustment 2.0 --yes %s %s 1000000udvpn --node "%s"' % (scrtxxs.sentinelhub,
+    transfer_cmd = '%s tx bank send --gas auto --gas-prices 0.2udvpn --gas-adjustment 2.0 --chain-id sentinelhub-2 --yes %s %s 1000000udvpn --node "%s"' % (scrtxxs.sentinelhub,
                                                                                                                                    scrtxxs.WalletAddress,
                                                                                                                                    wallet,
                                                                                                                                    scrtxxs.RPC)
