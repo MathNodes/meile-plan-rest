@@ -1,23 +1,27 @@
 #!/bin/env python3
+
+'''
+Run in a crontab:
+* * * * * cmd
+'''
+
+
 import argparse
 import scrtxxs
 from urllib.parse import urlparse
 from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins
-from sentinel_protobuf.sentinel.subscription.v2.msg_pb2 import MsgCancelRequest, MsgCancelResponse
 
 from sentinel_sdk.sdk import SDKInstance
-from sentinel_sdk.types import NodeType, TxParams, Status
+from sentinel_sdk.types import TxParams
 from sentinel_sdk.utils import search_attribute
-from pywgkey import WgKey
-from mnemonic import Mnemonic
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
 import ecdsa
 import hashlib
 import bech32
-from os import path
-from getpass import getpass
-import sys
-
+from os import path, getcwd
+import pymysql
+from datetime import datetime,timedelta
+from subprocess import Popen
 class PlanSubscribe():
     
     def __init__(self, keyring_passphrase, wallet_name, seed_phrase = None):
@@ -38,6 +42,13 @@ class PlanSubscribe():
         else:
             self.keyring = self.__keyring(keyring_passphrase)
         
+        self._db = pymysql.connect(host=scrtxxs.MySQLHost,
+                         port=scrtxxs.MySQLPort,
+                         user=scrtxxs.MySQLUsername,
+                         passwd=scrtxxs.MySQLPassword,
+                         db=scrtxxs.MySQLDB,
+                         charset='utf8mb4',
+                         cursorclass=pymysql.cursors.DictCursor)
         
     def __keyring(self, keyring_passphrase: str):
         kr = CryptFileKeyring()
@@ -45,6 +56,28 @@ class PlanSubscribe():
         kr.file_path = path.join(scrtxxs.PlanKeyringDIR, kr.filename)
         kr.keyring_key = keyring_passphrase
         return kr   
+    
+    def GetPlanNodes(self):
+        
+        c = self._db.cursor()
+        q = "SELECT * FROM plan_node_subscriptions;"
+        c.execute(q)
+        
+        return c.fetchall()
+    
+    def ComputeResub(self, plan_nodes):
+        now = datetime.now()
+        
+        resub_nodes = []
+        resub_plan_nodes = {}
+        
+        now_plus_30 = now + timedelta(days=30)
+        
+        for n in plan_nodes:
+            if n['inactive_date'] < now_plus_30:
+                resub_nodes.append(n['node_address'])
+                resub_plan_nodes[n['uuid']] = resub_nodes
+        return resub_plan_nodes
     
     def subscribe_to_nodes_for_plan(self, nodeaddress, duration):
         
@@ -86,9 +119,9 @@ class PlanSubscribe():
 if __name__ == "__main__":
     
     
-    parser = argparse.ArgumentParser(description="Meile Plan Subscriber - v0.1 - freQniK")
+    parser = argparse.ArgumentParser(description="Meile Plan Subscriber - v0.2 - freQniK")
     
-    parser.add_argument('--file', help="--file <nodefile>, absolute path of a list of sentnode... addresses separated by newline", metavar="file")
+    #parser.add_argument('--file', help="--file <nodefile>, absolute path of a list of sentnode... addresses separated by newline", metavar="file")
     parser.add_argument('--seed', action='store_true',help='set if you are specifying a seedphrase', default=False)
     
     args = parser.parse_args()
@@ -98,16 +131,23 @@ if __name__ == "__main__":
     else:
         ps = PlanSubscribe(scrtxxs.HotWalletPW, scrtxxs.WalletName, None)
     
-    if args.file:
-        with open(args.file, 'r') as nodefile:
-            nodes = nodefile.readlines()
-            
-    else:
-        sys.exit(1)
         
-    for n in nodes:
-        print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s)...")
-        response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
-        print(response)
-        
-        
+    resub_plan_nodes = ps.ComputeResub(ps.GetPlanNodes())
+    uuids = ''
+    for plan,nodes in resub_plan_nodes.items():
+        uuids = ','.join([uuids,plan])
+        for n in nodes:
+            print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
+            #response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
+            #print(response)
+    
+    # Run db updater script with UUIDs
+    uuids = uuids.split(',')[1:]
+    print(uuids)
+    for uuid in uuids:
+        update_cmd = f"{scrtxxs.HELPERS}/update-node-scriptions.py --uuid  {uuid}"
+    
+        proc1 = Popen(update_cmd, shell=True)
+        proc1.wait(timeout=30)
+
+        proc_out,proc_err = proc1.communicate()

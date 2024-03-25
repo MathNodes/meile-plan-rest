@@ -97,7 +97,7 @@ class UpdateNodeScriptions():
         
         
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Meile Plan Subscriber - v0.1 - freQniK")
+    parser = argparse.ArgumentParser(description="Meile Plan Sub Updater - v0.1 - freQniK")
     parser.add_argument('--uuid', help="--uuid <uuid> , plan uuid", metavar="uuid")
     
     args = parser.parse_args()
@@ -106,7 +106,9 @@ if __name__ == "__main__":
         parser.print_help()
         sys.exit(1)
         
+    
     uns = UpdateNodeScriptions()
+        
     nodes = uns.GetNodesOnPlan(args.uuid)
     subs_on_plan = uns.qs_on_plan(nodes)
     
