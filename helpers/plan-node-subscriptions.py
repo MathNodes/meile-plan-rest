@@ -22,6 +22,9 @@ from os import path, getcwd
 import pymysql
 from datetime import datetime,timedelta
 from subprocess import Popen
+from time import sleep
+
+
 class PlanSubscribe():
     
     def __init__(self, keyring_passphrase, wallet_name, seed_phrase = None):
@@ -115,15 +118,31 @@ class PlanSubscribe():
                 return (True,subscription_id)
 
         return(False, "Tx error")
+
+def run_update(uuid):
+    update_cmd = f"{scrtxxs.HELPERS}/update-node-scriptions.py --uuid  {uuid}"
     
+    proc1 = Popen(update_cmd, shell=True)
+    proc1.wait(timeout=30)
+
+    proc_out,proc_err = proc1.communicate()
+
+def run_insert(node_file, uuid):
+    update_cmd = f"{scrtxxs.HELPERS}/insert-nodes.py --uuid  {uuid} --file {node_file}"
+    
+    proc1 = Popen(update_cmd, shell=True)
+    proc1.wait(timeout=30)
+
+    proc_out,proc_err = proc1.communicate()
+
 if __name__ == "__main__":
     
     
     parser = argparse.ArgumentParser(description="Meile Plan Subscriber - v0.2 - freQniK")
     
-    #parser.add_argument('--file', help="--file <nodefile>, absolute path of a list of sentnode... addresses separated by newline", metavar="file")
+    parser.add_argument('--file', help="--file <nodefile>, absolute path of a list of sentnode... addresses separated by newline", metavar="file")
     parser.add_argument('--seed', action='store_true',help='set if you are specifying a seedphrase', default=False)
-    
+    parser.add_argument('--uuid', help="--uuid <uuid>, uuid of plan to subscribe nodes to", metavar="uuid")
     args = parser.parse_args()
     
     if args.seed:
@@ -131,23 +150,35 @@ if __name__ == "__main__":
     else:
         ps = PlanSubscribe(scrtxxs.HotWalletPW, scrtxxs.WalletName, None)
     
-        
-    resub_plan_nodes = ps.ComputeResub(ps.GetPlanNodes())
-    uuids = ''
-    for plan,nodes in resub_plan_nodes.items():
-        uuids = ','.join([uuids,plan])
+    if args.file and args.uuid:
+        with open(args.file, 'r') as nodefile:
+            nodes = nodefile.readlines()
+            
         for n in nodes:
-            print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
-            #response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
-            #print(response)
-    
-    # Run db updater script with UUIDs
-    uuids = uuids.split(',')[1:]
-    print(uuids)
-    for uuid in uuids:
-        update_cmd = f"{scrtxxs.HELPERS}/update-node-scriptions.py --uuid  {uuid}"
-    
-        proc1 = Popen(update_cmd, shell=True)
-        proc1.wait(timeout=30)
-
-        proc_out,proc_err = proc1.communicate()
+            print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {args.uuid}...")
+            response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
+            print(response)
+        print("Inserting nodes in plan DB...", end='')    
+        run_insert(args.file, args.uuid)
+        sleep(2)
+        print("Done.")    
+        
+    else:
+        resub_plan_nodes = ps.ComputeResub(ps.GetPlanNodes())
+        uuids = ''
+        for plan,nodes in resub_plan_nodes.items():
+            uuids = ','.join([uuids,plan])
+            for n in nodes:
+                print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
+                #response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
+                #print(response)
+        
+        # Run db updater script with UUIDs
+        uuids = uuids.split(',')[1:]
+        print(uuids)
+        for uuid in uuids:
+            print(f"Updating node subs for plan {uuid}...", end='')
+            run_update(uuid)
+            sleep(2)
+            print("Done.")
+            
