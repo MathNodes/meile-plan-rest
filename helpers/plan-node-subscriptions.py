@@ -53,6 +53,13 @@ class PlanSubscribe():
                          charset='utf8mb4',
                          cursorclass=pymysql.cursors.DictCursor)
         
+        private_key = self.keyring.get_password("meile-plan", self.wallet_name)
+        
+        grpcaddr, grpcport = urlparse(scrtxxs.GRPC).netloc.split(":")
+        
+        self.sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key)
+        
+        
     def __keyring(self, keyring_passphrase: str):
         kr = CryptFileKeyring()
         kr.filename = "keyring.cfg"
@@ -68,6 +75,14 @@ class PlanSubscribe():
         
         return c.fetchall()
     
+    def GetPlanID(self, uuid):
+        c = self._db.cursor()
+        q = f"SELECT plan_id FROM meile_plans WHERE uuid = '{uuid}';"
+    
+        c.execute(q)
+        
+        return c.fetchone()
+                  
     def ComputeResub(self, plan_nodes):
         now = datetime.now()
         
@@ -84,12 +99,6 @@ class PlanSubscribe():
     
     def subscribe_to_nodes_for_plan(self, nodeaddress, duration):
         
-        private_key = self.keyring.get_password("meile-plan", self.wallet_name)
-        
-        grpcaddr, grpcport = urlparse(scrtxxs.GRPC).netloc.split(":")
-        
-        sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key)
-        
         tx_params = TxParams(
             # denom="udvpn",  # TODO: from ConfParams
             # fee_amount=20000,  # TODO: from ConfParams
@@ -97,7 +106,7 @@ class PlanSubscribe():
             gas_multiplier=1.15
         )
     
-        tx = sdk.nodes.SubscribeToNode(
+        tx = self.sdk.nodes.SubscribeToNode(
             node_address=nodeaddress,
             gigabytes=0,  # TODO: review this please
             hours=int(duration),  # TODO: review this please
@@ -109,7 +118,7 @@ class PlanSubscribe():
             return(False, tx["log"])
 
         if tx.get("hash", None) is not None:
-            tx_response = sdk.nodes.wait_transaction(tx["hash"])
+            tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
             print(tx_response)
             subscription_id = search_attribute(
                 tx_response, "sentinel.node.v2.EventCreateSubscription", "id"
@@ -118,6 +127,32 @@ class PlanSubscribe():
                 return (True,subscription_id)
 
         return(False, "Tx error")
+    
+    
+    def add_node_to_plan(self, plan_id, node):
+        tx_params = TxParams(
+            # denom="udvpn",  # TODO: from ConfParams
+            # fee_amount=20000,  # TODO: from ConfParams
+            # gas=ConfParams.GAS,
+            gas_multiplier=1.15
+        )
+        
+        
+        tx = self.sdk.plans.LinkNode(
+            plan_id=plan_id,
+            node_address=node
+            )
+        
+        if tx.get("log", None) is not None:
+            return (False, tx["log"])
+            
+
+        if tx.get("hash", None) is not None:
+            tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
+            print(tx_response)
+            return (True, None)
+
+        return (False,"Tx error")
 
 def run_update(uuid):
     update_cmd = f"{scrtxxs.HELPERS}/update-node-scriptions.py --uuid  {uuid}"
@@ -151,6 +186,8 @@ if __name__ == "__main__":
         ps = PlanSubscribe(scrtxxs.HotWalletPW, scrtxxs.WalletName, None)
     
     if args.file and args.uuid:
+        plan_id = ps.GetPlanID(args.uuid)['plan_id']
+        
         with open(args.file, 'r') as nodefile:
             nodes = nodefile.readlines()
             
@@ -158,20 +195,30 @@ if __name__ == "__main__":
             print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {args.uuid}...")
             response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
             print(response)
+            print("Waiting 5s...")
+            sleep(5)
+            print(f"Adding {n} to plan {plan_id},{args.uuid}...")
+            ps.add_node_to_plan(plan_id, n)
+            
+            
+            
         print("Inserting nodes in plan DB...", end='')    
         run_insert(args.file, args.uuid)
         sleep(2)
-        print("Done.")    
+        print("Done.")
+            
         
     else:
         resub_plan_nodes = ps.ComputeResub(ps.GetPlanNodes())
+        print(resub_plan_nodes)
+        
         uuids = ''
         for plan,nodes in resub_plan_nodes.items():
             uuids = ','.join([uuids,plan])
             for n in nodes:
                 print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
-                #response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
-                #print(response)
+                response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
+                print(response)
         
         # Run db updater script with UUIDs
         uuids = uuids.split(',')[1:]
