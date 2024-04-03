@@ -1,0 +1,362 @@
+import os
+import jwt
+import time
+import pexpect
+from urllib.parse import urlparse
+from os import path
+import json
+
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+from flaskext.mysql import MySQL
+from flask import Flask, abort, request, jsonify, g, url_for, Response
+from flask_sqlalchemy import SQLAlchemy
+from passlib.apps import custom_app_context as pwd_context
+from flask_httpauth import HTTPBasicAuth
+from werkzeug.security import generate_password_hash, check_password_hash
+
+from sentinel_sdk.sdk import SDKInstance
+from sentinel_sdk.types import TxParams
+from sentinel_sdk.utils import search_attribute
+
+from keyrings.cryptfile.cryptfile import CryptFileKeyring
+
+import scrtxxs
+
+
+VERSION=20240402.2343
+
+app = Flask(__name__)
+mysql = MySQL()
+mysql.init_app(app)
+
+ 
+
+HotWalletAddress = scrtxxs.WalletAddress
+keyring_passphrase = scrtxxs.HotWalletPW
+
+DBdir = scrtxxs.dbDIR
+WalletLogDIR = scrtxxs.LogDIR
+DBFile = 'sqlite:///' + DBdir + '/meile_plan.sqlite'
+
+
+# SQLAlchemy Configurations
+app.config['SECRET_KEY'] = scrtxxs.SQLAlchemyScrtKey
+app.config['SQLALCHEMY_DATABASE_URI'] = DBFile
+app.config['SQLALCHEMY_COMMIT_ON_TEARDOWN'] = True
+app.config['SQLALCHEMY_TRACK_MODIFCATIONS'] = False
+
+# MySQL configurations
+app.config['MYSQL_DATABASE_USER'] = scrtxxs.MySQLUsername
+app.config['MYSQL_DATABASE_PASSWORD'] = scrtxxs.MySQLPassword
+app.config['MYSQL_DATABASE_DB'] = scrtxxs.MySQLDB
+app.config['MYSQL_DATABASE_HOST'] = scrtxxs.MySQLHost
+
+
+db = SQLAlchemy(app)
+auth = HTTPBasicAuth()
+
+def __keyring(keyring_passphrase: str):
+        kr = CryptFileKeyring()
+        kr.filename = "keyring.cfg"
+        kr.file_path = path.join(scrtxxs.PlanKeyringDIR, kr.filename)
+        kr.keyring_key = keyring_passphrase
+        return kr 
+
+keyring = __keyring(scrtxxs.HotWalletPW)
+private_key = keyring.get_password("meile-plan", scrtxxs.WalletName)        
+grpcaddr, grpcport = urlparse(scrtxxs.GRPC_CHINA).netloc.split(":")
+sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=True)
+
+class User(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(32), index=True)
+    password_hash = db.Column(db.String(128))
+
+    def hash_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def verify_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    def generate_auth_token(self, expires_in=600):
+        return jwt.encode(
+            {'id': self.id, 'exp': time.time() + expires_in},
+            app.config['SECRET_KEY'], algorithm='HS256')
+
+    @staticmethod
+    def verify_auth_token(token):
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'],
+                              algorithms=['HS256'])
+        except:
+            return
+        return User.query.get(data['id'])
+ 
+@auth.verify_password
+def verify_password(username_or_token, password):
+    # first try to authenticate by token
+    user = User.verify_auth_token(username_or_token)
+    if not user:
+        # try to authenticate with username/password
+        user = User.query.filter_by(username=username_or_token).first()
+        if not user or not user.verify_password(password):
+            return False
+    g.user = user
+    return True
+
+@app.route('/api/users', methods=['POST'])
+def new_user():
+    username = request.json.get('username')
+    password = request.json.get('password')
+    if username is None or password is None:
+        abort(400)    # missing arguments
+    if User.query.filter_by(username=username).first() is not None:
+        abort(400)    # existing user
+    user = User(username=username)
+    user.hash_password(password)
+    db.session.add(user)
+    db.session.commit()
+    return (jsonify({'username': user.username}), 201,
+            {'Location': url_for('get_user', id=user.id, _external=True)})
+
+@app.route('/api/users/<int:id>')
+def get_user(id): 
+    user = User.query.get(id)
+    if not user:
+        abort(400)
+    return jsonify({'username': user.username})
+
+@app.route('/api/token')
+@auth.login_required
+def get_auth_token():
+    token = g.user.generate_auth_token(600)
+    return jsonify({'token': token.decode('ascii'), 'duration': 600})
+
+@app.errorhandler(404)
+def page_not_found(e):
+    return "<h1>404</h1><p>The resource could not be found.</p>", 404
+
+def UpdateDBTable(query):
+    conn = mysql.connect()
+    cursor = conn.cursor()
+    cursor.execute(query)
+    conn.commit()
+    
+def GetDBCursor():
+    conn = mysql.connect()
+    return conn.cursor()
+    
+def GetPlanCostDenom(uuid):
+    
+    query = "SELECT plan_price, plan_denom FROM meile_plans;"
+    
+    c = GetDBCursor()
+    c.execute(query)
+    plan411 = c.fetchone()
+    
+    return plan411[0], plan411[1]
+
+def CheckRenewalStatus(subid, wallet):
+    
+    query = f"SELECT subscription_id, subscribe_date FROM meile_subscriptions WHERE wallet = '{wallet}' AND subscription_id = {subid}"
+    c = GetDBCursor()
+    c.execute(query)
+    
+    results = c.fetchone()
+    
+    if results is not None:
+        if results[0] and results[1]:
+            return True,results[1]
+        else: 
+            return False, None          
+    else: 
+        return False, None
+    
+@app.route('/v1/add', methods=['POST'])
+@auth.login_required
+def add_wallet_to_plan():
+    status  = False
+    renewal = False
+    try: 
+        JSON      = request.json
+        wallet    = JSON['data']['wallet']
+        plan_id   = int(JSON['data']['plan_id'])     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
+        duration  = int(JSON['data']['duration'])   # duration of plan subscription, in months
+        sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
+        uuid      = JSON['data']['uuid']            # uuid of subscription
+        amt_paid  = int(JSON['data']['amt'])
+        denom     = JSON['data']['denom']
+    except Exception as e:
+        print(str(e))
+        status = False
+        tx = None
+        message = "Not all POST values were present. Please try submitting your request again."
+        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : None}
+        print(PlanTX)
+        return jsonify(PlanTX)    
+    
+    cost, denom = GetPlanCostDenom(uuid)
+    print(f"Cost: {cost}, denom: {denom}")
+    if not cost or not denom:
+        status = False
+        message = "No plan found in Database. Wallet not added to non-existing plan"
+        tx = "None"
+        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : None}
+        print(PlanTX)
+        return jsonify(PlanTX)
+    
+    renewal,subscription_date = CheckRenewalStatus(sub_id, wallet) 
+    
+    now = datetime.now()
+    expires = now + relativedelta(months=+duration)
+    
+    
+    WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log")
+    
+    log_file_descriptor = open(WalletLogFile, "a+")
+
+    tx_params = TxParams(
+            # denom="udvpn",  # TODO: from ConfParams
+            # fee_amount=20000,  # TODO: from ConfParams
+            # gas=ConfParams.GAS,
+            gas_multiplier=1.15
+        )
+    tx = sdk.subscriptions.Allocate(address=wallet, bytes=str(scrtxxs.BYTES), id=sub_id, tx_params=tx_params)
+    if tx.get("log", None) is not None:
+        status = False
+        message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."
+        expires = None
+        tx = "None"
+        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
+        print(PlanTX)
+        log_file_descriptor.write(json.dumps(PlanTX))
+        return jsonify(PlanTX)
+            
+
+    if tx.get("hash", None) is not None:
+        tx_response = sdk.nodes.wait_transaction(tx["hash"])
+        print(tx_response)
+        log_file_descriptor.write(json.dumps(tx_response))
+        message = "Success."
+    else:
+        status = False
+        message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."
+        expires = None
+        tx = "None"
+        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
+        log_file_descriptor.write(json.dumps(PlanTX))
+        return jsonify(PlanTX)
+    
+    if renewal and subscription_date is not None:
+        query = '''
+                UPDATE meile_subscriptions 
+                SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %d, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s"
+                WHERE wallet = "%s" AND subscription_id = %d
+                ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, sub_id) 
+                
+    else:
+        query = '''
+                INSERT INTO meile_subscriptions (uuid, wallet, subscription_id, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration, expires)
+                VALUES("%s", "%s", %d, %d, %d, "%s", "%s", %d, "%s")
+                ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, str(now), duration, str(expires)) 
+
+
+    print("Updating Subscription Table...")
+    try:
+        UpdateDBTable(query)    
+    except Exception as e:
+        print(str(e))
+        status = False
+        message = "Error updating subscription table. Please contact support@mathnodes.com for more information."
+        tx = None
+        expires = None
+        
+    transfer_cmd = '%s tx bank send --gas auto --gas-prices 0.2udvpn --gas-adjustment 2.0 --chain-id sentinelhub-2 --yes %s %s 1000000udvpn --node "%s"' % (scrtxxs.sentinelhub,
+                                                                                                                                   scrtxxs.WalletAddress,
+                                                                                                                                   wallet,
+                                                                                                                                   scrtxxs.RPC)
+    
+    print(transfer_cmd)
+    try: 
+        child = pexpect.spawn(transfer_cmd)
+        
+        child.expect("Enter .*")
+        child.sendline(keyring_passphrase)
+        child.expect(pexpect.EOF)    
+    except Exception as e:
+        print(str(e))
+        message = message + "Success adding wallet to plan. Error on sending 1dvpn to wallet address."
+    print(f'Successfully sent 1dvpn to: {wallet}')
+    PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
+    return jsonify(PlanTX)
+    
+    
+@app.route('/v1/plans', methods=['GET'])
+@auth.login_required
+def get_plan_subscriptions():
+    query = "SELECT * from meile_plans";
+    
+    c = GetDBCursor()
+    c.execute(query)
+
+    rows = c.fetchall()
+    columns = [desc[0] for desc in c.description]
+    result = []
+    for row in rows:
+        row = dict(zip(columns, row))
+        result.append(row)
+
+    try: 
+        return jsonify(result)
+    except Exception as e:
+        print(str(e))
+        abort(404)
+
+@app.route('/v1/subscription/<walletAddress>', methods=['GET'])
+@auth.login_required
+def get_current_subscriber(walletAddress):
+    
+    query = f"SELECT * from meile_subscriptions WHERE wallet = '{walletAddress}'"
+    
+    c = GetDBCursor()
+    c.execute(query)
+
+    rows = c.fetchall()
+    columns = [desc[0] for desc in c.description]
+    result = []
+    for row in rows:
+        row = dict(zip(columns, row))
+        result.append(row)
+
+    try: 
+        return jsonify(result)
+    except Exception as e:
+        print(str(e))
+        abort(404)
+        
+@app.route('/v1/nodes/<uuid>', methods=['GET'])
+@auth.login_required
+def get_nodes(uuid):
+    
+    query = f"SELECT node_address FROM plan_nodes WHERE uuid = '{uuid}'"
+
+
+    c = GetDBCursor()
+    c.execute(query)
+    
+    result = c.fetchall()
+    
+    try:
+        return jsonify(result)
+    except Exception as e:
+        print(str(e))
+        abort(404)    
+    
+def UpdateMeileSubscriberDB():
+    pass
+
+
+db.create_all()
