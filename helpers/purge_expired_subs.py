@@ -5,11 +5,9 @@ import scrtxxs
 from datetime import datetime
 import pexpect
 from os import path
-
 from time import sleep
 
 VERSION = 20240301.0001
-
 
 class PurgeExpiredSubs():
     
@@ -31,29 +29,35 @@ class PurgeExpiredSubs():
     
     def get_subscription_table(self,db):
         c = db.cursor()
-        query = 'SELECT * FROM meile_subscriptions;'
+        query = 'SELECT * FROM meile_subscriptions WHERE active = 1;'
         c.execute(query)
         
         return c.fetchall()
+    def update_sub_table(self,sub,db):
+        q = f"UPDATE meile_subscriptions SET active = 0 WHERE id = {sub['id']};"
+        c = db.cursor()
+        c.execute(q)
+        db.commit()
+
     
     def deactivate_expired_subscriptions(self, db, subs_table):
         NOW = datetime.now()
-        
+        print("Removing Allocations...")        
         for sub in subs_table:
             if sub['expires'] < NOW:
+                print(f"Unallocating; {sub}")
                 deallocate_cmd = self.__deallocate_cmd % (scrtxxs.sentinelhub,
-                                                         scrtxxs.WalletName,
-                                                         scrtxxs.RPC,
-                                                         scrtxxs.KeyringDIR,
-                                                         scrtxxs.CHAINID,
-                                                         sub['subscription_id'],
-                                                         sub['wallet'])
-
+                                         scrtxxs.WalletName,
+                                         scrtxxs.RPC,
+                                         scrtxxs.KeyringDIR,
+                                         scrtxxs.CHAINID,
+                                         sub['subscription_id'],
+                                         sub['wallet'])
+                
                 print(deallocate_cmd)
                 
                 try: 
-                    ofile = open(self.__unsubLog, 'ab+')
-                    
+                    ofile = open(self.__unsubLog, 'ab+')                    
                     child = pexpect.spawn(deallocate_cmd)
                     child.logfile = ofile
                     
@@ -67,8 +71,10 @@ class PurgeExpiredSubs():
                 except Exception as e:
                     print(f'ERROR UNSUBING: {str(e)}')
                     continue
-                   
-                sleep(10)
+                print("Setting sub to inactive...")
+                self.update_sub_table(sub,db)
+                sleep(10)                   
+        print("Done.")        
                 
                 
 if __name__ == "__main__":
