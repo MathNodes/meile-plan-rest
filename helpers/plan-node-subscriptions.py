@@ -23,7 +23,12 @@ import pymysql
 from datetime import datetime,timedelta
 from subprocess import Popen
 from time import sleep
+import requests
 
+MNAPI = "https://api.sentinel.mathnodes.com"
+NODEAPI = "/sentinel/nodes/%s"
+
+VERSION = 20240417.1744
 
 class PlanSubscribe():
     
@@ -89,10 +94,8 @@ class PlanSubscribe():
         resub_nodes = []
         resub_plan_nodes = {}
         
-        now_plus_30 = now + timedelta(days=30)
-        
         for n in plan_nodes:
-            if n['inactive_date'] < now_plus_30:
+            if n['inactive_date'] < now:
                 resub_nodes.append(n['node_address'])
                 resub_plan_nodes[n['uuid']] = resub_nodes
         return resub_plan_nodes
@@ -216,6 +219,18 @@ if __name__ == "__main__":
         for plan,nodes in resub_plan_nodes.items():
             uuids = ','.join([uuids,plan])
             for n in nodes:
+                print(f"Checking if {n} is active...")
+                try: 
+                    resp = requests.get(MNAPI + NODEAPI % n)
+                    nodeJSON = resp.json()
+                    
+                    if nodeJSON['node']['status'] == "inactive":
+                        print("Node is inactive, skipping...")
+                        continue
+                except Exception as e:
+                    print(str(e))
+                    pass
+                    
                 print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
                 response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
                 print(response)

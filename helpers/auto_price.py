@@ -47,6 +47,7 @@ class AutoPrice():
                 try:
                     response = requests.get(COINSTATS_API % (coin, ts), headers=headers)
                     r = response.json()
+                    print(r)
                 except Exception as e:
                     print(str(e))
                     time.sleep(5)

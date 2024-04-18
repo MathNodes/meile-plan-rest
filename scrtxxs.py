@@ -12,6 +12,7 @@ MySQLPassword     = 'password'
 MySQLDB           = 'db_name'
 BYTES             = 1073741824000 # 1 TB
 RPC               = "https://rpc.mathnodes.com:443"
+GRPC_BLUEFREN     = "https://grpc.bluefren.xyz:443"
 CHAINID           = "sentinelhub-2"
 KeyringDIR        = "/home/" + str(pwd.getpwuid(os.getuid())[0])
 LogDIR            = '/home/' + str(pwd.getpwuid(os.getuid())[0]) + '/Logs'
