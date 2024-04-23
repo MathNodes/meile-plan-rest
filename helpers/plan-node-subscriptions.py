@@ -2,7 +2,7 @@
 
 '''
 Run in a crontab:
-* * * * * cmd
+0 * * * * cmd
 '''
 
 
@@ -27,8 +27,9 @@ import requests
 
 MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
+GRPC = scrtxxs.GRPC_MN
 
-VERSION = 20240417.1744
+VERSION = 20240423.0031
 
 class PlanSubscribe():
     
@@ -60,9 +61,9 @@ class PlanSubscribe():
         
         private_key = self.keyring.get_password("meile-plan", self.wallet_name)
         
-        grpcaddr, grpcport = urlparse(scrtxxs.GRPC).netloc.split(":")
+        grpcaddr, grpcport = urlparse(GRPC).netloc.split(":")
         
-        self.sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key)
+        self.sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=True)
         
         
     def __keyring(self, keyring_passphrase: str):
@@ -176,7 +177,7 @@ def run_insert(node_file, uuid):
 if __name__ == "__main__":
     
     
-    parser = argparse.ArgumentParser(description="Meile Plan Subscriber - v0.2 - freQniK")
+    parser = argparse.ArgumentParser(description="Meile Plan Subscriber - v0.3 - freQniK")
     
     parser.add_argument('--file', help="--file <nodefile>, absolute path of a list of sentnode... addresses separated by newline", metavar="file")
     parser.add_argument('--seed', action='store_true',help='set if you are specifying a seedphrase', default=False)
@@ -195,52 +196,59 @@ if __name__ == "__main__":
             nodes = nodefile.readlines()
             
         for n in nodes:
-            print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {args.uuid}...")
+            print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {args.uuid}...")
             response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
             print(response)
-            print("Waiting 5s...")
+            print("[pns]: Waiting 5s...")
             sleep(5)
-            print(f"Adding {n} to plan {plan_id},{args.uuid}...")
+            print(f"[pns]: Adding {n} to plan {plan_id},{args.uuid}...")
             ps.add_node_to_plan(plan_id, n)
             
             
             
-        print("Inserting nodes in plan DB...", end='')    
+        print("[pns]: Inserting nodes in plan DB...", end='')    
         run_insert(args.file, args.uuid)
         sleep(2)
-        print("Done.")
-            
+        print("[pns]: Done.")
+        print("[pns]: Wainting...")
+        sleep(20)
+        print("[pns]: Updating plan_node_subscriptions...")
+        run_update(args.uuid)
+        print("[pns]: Done.")    
         
     else:
+        print("[pns]: Computing Resubscriptions...")
         resub_plan_nodes = ps.ComputeResub(ps.GetPlanNodes())
-        print(resub_plan_nodes)
+        print(f"[pns]: {resub_plan_nodes}")
         
         uuids = ''
         for plan,nodes in resub_plan_nodes.items():
             uuids = ','.join([uuids,plan])
             for n in nodes:
-                print(f"Checking if {n} is active...")
+                print(f"[pns]: Checking if {n} is active...")
                 try: 
                     resp = requests.get(MNAPI + NODEAPI % n)
                     nodeJSON = resp.json()
                     
                     if nodeJSON['node']['status'] == "inactive":
-                        print("Node is inactive, skipping...")
+                        print("[pns]: Node is inactive, skipping...")
                         continue
                 except Exception as e:
                     print(str(e))
                     pass
                     
-                print(f"Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
+                print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
                 response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
-                print(response)
+                print(f"[pns]: {response}")
         
+        print("[pns]: Waiting....")
+        sleep(10)
         # Run db updater script with UUIDs
         uuids = uuids.split(',')[1:]
-        print(uuids)
+        print(f"[pns]: uuids: {uuids}")
         for uuid in uuids:
-            print(f"Updating node subs for plan {uuid}...", end='')
+            print(f"[pns]: Updating node subs for plan {uuid}...", end='')
             run_update(uuid)
             sleep(2)
-            print("Done.")
+            print("[pns]: Done.")
             

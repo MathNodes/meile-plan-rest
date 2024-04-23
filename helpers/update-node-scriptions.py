@@ -11,6 +11,8 @@ import pymysql
 import sys
 
 UUID = ""
+VERSION = 20240423.0019
+GRPC = scrtxxs.GRPC_MN
 
 class UpdateNodeScriptions():
     
@@ -18,9 +20,9 @@ class UpdateNodeScriptions():
         #private_key = self.keyring.get_password("meile-plan", self.wallet_name)
         
         #grpcaddr, grpcport = urlparse(scrtxxs.GRPC).netloc.split(":")
-        grpcaddr, grpcport = urlparse(scrtxxs.GRPC).netloc.split(":")
+        grpcaddr, grpcport = urlparse(GRPC).netloc.split(":")
         
-        self._sdk = SDKInstance(grpcaddr, int(grpcport))
+        self._sdk = SDKInstance(grpcaddr, int(grpcport), ssl=True)
         self._db = pymysql.connect(host=scrtxxs.MySQLHost,
                          port=scrtxxs.MySQLPort,
                          user=scrtxxs.MySQLUsername,
@@ -52,6 +54,7 @@ class UpdateNodeScriptions():
         for s in SubsNodesInfo:
             for n in nodes:
                 if n == s['Node']:
+                    print(f"[uns]: node: {n} is on plan and is subscribed")
                     node_subs_on_plan.append(s)
                     
                     
@@ -93,11 +96,12 @@ class UpdateNodeScriptions():
                    str(s['Inactive Date']))
             
             c.execute(q)
+            print(f"[uns]: {q}")
             self._db.commit()
         
         
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Meile Plan Sub Updater - v0.1 - freQniK")
+    parser = argparse.ArgumentParser(description="Meile Plan Sub Updater - v0.3 - freQniK")
     parser.add_argument('--uuid', help="--uuid <uuid> , plan uuid", metavar="uuid")
     
     args = parser.parse_args()
@@ -108,8 +112,10 @@ if __name__ == "__main__":
         
     
     uns = UpdateNodeScriptions()
-        
+    print("[uns]: Getting Nodes on Plan...")    
     nodes = uns.GetNodesOnPlan(args.uuid)
+    print(f"[uns]: {nodes}")
+    print("[uns]: Querying subscriptions of nodes on plan...")
     subs_on_plan = uns.qs_on_plan(nodes)
-    
+    print("[uns]: Updating node inactive date on plan in database...")
     uns.UpdateSubsExpiration(subs_on_plan, args.uuid)

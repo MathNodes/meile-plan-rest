@@ -5,7 +5,9 @@ import scrtxxs
 import uuid
 import argparse
 import sys
+from time import sleep
 
+VERSION = 20240423.0032
 
 def connDB():
     db = pymysql.connect(host=scrtxxs.MySQLHost,
@@ -50,7 +52,7 @@ if __name__ == "__main__":
         node_addresses.append(d)
         k += 1
     
-    print(f"Inserting: {k}, nodes into plan: {puuid}...")
+    print(f"[in]: Inserting: {k}, nodes into plan: {puuid}...")
     queries = []
     for a in node_addresses:
         q ='''
@@ -61,11 +63,12 @@ if __name__ == "__main__":
     k = 0
     for q in queries:
         try:
-            print(q)
+            print(f"[in]: {q}")
             c.execute(q)
             db.commit()
             k += 1
+            sleep(2)
         except Exception as e:
             print(str(e))
             
-    print(f"Inserted: {k}, nodes into plan: {puuid}.")
+    print(f"[in]: Inserted: {k}, nodes into plan: {puuid}.")
