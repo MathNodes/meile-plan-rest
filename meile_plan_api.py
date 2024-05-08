@@ -16,7 +16,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import scrtxxs
 
 
-VERSION=20240415.0012
+VERSION=20240503.2336
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -140,7 +140,7 @@ def GetPlanCostDenom(uuid):
 
 def CheckRenewalStatus(subid, wallet):
     
-    query = f"SELECT subscription_id, subscribe_date FROM meile_subscriptions WHERE wallet = '{wallet}' AND subscription_id = {subid}"
+    query = f"SELECT subscription_id, subscribe_date, expires FROM meile_subscriptions WHERE wallet = '{wallet}' AND subscription_id = {subid}"
     c = GetDBCursor()
     c.execute(query)
     
@@ -148,11 +148,11 @@ def CheckRenewalStatus(subid, wallet):
     
     if results is not None:
         if results[0] and results[1]:
-            return True,results[1]
+            return True,results[1],results[2]
         else: 
-            return False, None          
+            return False, None, None          
     else: 
-        return False, None
+        return False, None, None
     
 @app.route('/v1/add', methods=['POST'])
 @auth.login_required
@@ -187,10 +187,17 @@ def add_wallet_to_plan():
         print(PlanTX)
         return jsonify(PlanTX)
     
-    renewal,subscription_date = CheckRenewalStatus(sub_id, wallet) 
+    renewal,subscription_date, expiration = CheckRenewalStatus(sub_id, wallet) 
     
     now = datetime.now()
-    expires = now + relativedelta(months=+duration)
+    if expiration:
+        if now < expiration:
+            expires = expiration + relativedelta(months=+duration)
+        else:
+            expires = now + relativedelta(months=+duration)
+    
+    else:
+        expires = now + relativedelta(months=+duration)
     
     
     WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log")
