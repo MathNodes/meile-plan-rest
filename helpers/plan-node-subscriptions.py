@@ -24,12 +24,13 @@ from datetime import datetime,timedelta
 from subprocess import Popen
 from time import sleep
 import requests
+import grpc
 
 MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
 GRPC = scrtxxs.GRPC_MN
-
-VERSION = 20240423.0031
+SSL = True
+VERSION = 20240508.0129
 
 class PlanSubscribe():
     
@@ -63,7 +64,7 @@ class PlanSubscribe():
         
         grpcaddr, grpcport = urlparse(GRPC).netloc.split(":")
         
-        self.sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=True)
+        self.sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=SSL)
         
         
     def __keyring(self, keyring_passphrase: str):
@@ -102,6 +103,7 @@ class PlanSubscribe():
         return resub_plan_nodes
     
     def subscribe_to_nodes_for_plan(self, nodeaddress, duration):
+        error_message = "NotNone"
         
         tx_params = TxParams(
             # denom="udvpn",  # TODO: from ConfParams
@@ -109,30 +111,37 @@ class PlanSubscribe():
             # gas=ConfParams.GAS,
             gas_multiplier=1.15
         )
-    
-        tx = self.sdk.nodes.SubscribeToNode(
-            node_address=nodeaddress,
-            gigabytes=0,  # TODO: review this please
-            hours=int(duration),  # TODO: review this please
-            denom="udvpn",
-            tx_params=tx_params,
-        )
+        while error_message:
+            try: 
+                tx = self.sdk.nodes.SubscribeToNode(
+                    node_address=nodeaddress,
+                    gigabytes=0,  # TODO: review this please
+                    hours=int(duration),  # TODO: review this please
+                    denom="udvpn",
+                    tx_params=tx_params,
+                )
+                
+                if tx.get("log", None) is not None:
+                    return(False, tx["log"])
         
-        if tx.get("log", None) is not None:
-            return(False, tx["log"])
+                if tx.get("hash", None) is not None:
+                    tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
+                    print(tx_response)
+                    subscription_id = search_attribute(
+                        tx_response, "sentinel.node.v2.EventCreateSubscription", "id"
+                    )
+                    if subscription_id:
+                        error_message = ""
+                        return (True,subscription_id)
+        
+                return(False, "Tx error")
+            except grpc.RpcError as e:
+                print(e.details())
+                error_message = e.details()
+                print("Sleeping for 15s...")
+                sleep(15)
+                continue
 
-        if tx.get("hash", None) is not None:
-            tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
-            print(tx_response)
-            subscription_id = search_attribute(
-                tx_response, "sentinel.node.v2.EventCreateSubscription", "id"
-            )
-            if subscription_id:
-                return (True,subscription_id)
-
-        return(False, "Tx error")
-    
-    
     def add_node_to_plan(self, plan_id, node):
         tx_params = TxParams(
             # denom="udvpn",  # TODO: from ConfParams
