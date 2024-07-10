@@ -22,11 +22,12 @@ from sentinel_sdk.utils import search_attribute
 from sentinel_protobuf.cosmos.base.v1beta1.coin_pb2 import Coin
 from mospy import Transaction
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
+from grpc import RpcError
 
 import scrtxxs
 
 
-VERSION=20240615.0134
+VERSION=20240710.0029
 
 app = Flask(__name__)
 mysql = MySQL()
