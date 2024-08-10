@@ -120,8 +120,9 @@ class TopUpSubscribers():
                 if tx.get("log", None) is None:
                     tx_response = self.sdk.nodes.wait_for_tx(tx["hash"])
                     tx_height = tx_response.get("txResponse", {}).get("height", 0) if isinstance(tx_response, dict) else tx_response.tx_response.height
-                    log_file_descriptor.write(json.dumps(tx_response) + '\n')
-                    log_file_descriptor.write(tx_height + '\n')
+                    with open(path.join(scrtxxs.LogDIR, "top-up.log"), "a+") as log_file_descriptor:
+                        log_file_descriptor.write(json.dumps(tx_response) + '\n')
+                        log_file_descriptor.write(tx_height + '\n')
                     print(f'Successfully sent 1dvpn to: {s["wallet"]}, height: {tx_height}')
                  
                 sleep(6)
