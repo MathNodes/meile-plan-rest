@@ -30,7 +30,7 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
 GRPC = scrtxxs.GRPC_MN
 SSL = True
-VERSION = 20240508.0129
+VERSION = 20241107.0005
 
 class PlanSubscribe():
     
@@ -100,7 +100,16 @@ class PlanSubscribe():
             if n['inactive_date'] < now:
                 resub_nodes.append(n['node_address'])
                 resub_plan_nodes[n['uuid']] = resub_nodes
-        return resub_plan_nodes
+        
+        resub = self.__remove_duplicates(resub_plan_nodes)
+        return resub
+    
+    def __remove_duplicates(self, test):
+        for key in test:
+            test[key] = [item for item in test[key] if sum(item in test[other_key] for other_key in test if other_key != key) == 0]
+        
+        return test
+
     
     def subscribe_to_nodes_for_plan(self, nodeaddress, duration):
         error_message = "NotNone"
