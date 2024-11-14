@@ -107,6 +107,7 @@ class PlanSubscribe():
     
     def __remove_duplicates(self, test):
         for key in test:
+            print(f"plan: {key}, subs: {test[key]}")
             test[key] = [item for item in test[key] if sum(item in test[other_key] for other_key in test if other_key != key) == 0]
             test[key] = list(set(test[key]))
         
