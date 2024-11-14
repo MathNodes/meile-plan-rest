@@ -30,7 +30,7 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
 GRPC = scrtxxs.GRPC_MN
 SSL = True
-VERSION = 20241107.0005
+VERSION = 20241114.1546
 
 class PlanSubscribe():
     
@@ -107,6 +107,7 @@ class PlanSubscribe():
     def __remove_duplicates(self, test):
         for key in test:
             test[key] = [item for item in test[key] if sum(item in test[other_key] for other_key in test if other_key != key) == 0]
+            test[key] = list(set(test[key]))
         
         return test
 
