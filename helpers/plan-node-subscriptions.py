@@ -25,13 +25,13 @@ from subprocess import Popen
 from time import sleep
 import requests
 import grpc
-from copy import deepcopy
+
 
 MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
 GRPC = scrtxxs.GRPC_MN
 SSL = True
-VERSION = 20241114.1546
+VERSION = 20241114.1614
 
 class PlanSubscribe():
     
@@ -94,20 +94,22 @@ class PlanSubscribe():
     def ComputeResub(self, plan_nodes):
         now = datetime.now()
         
-        resub_nodes = []
-        resub_plan_nodes = {}
+        unique_uuids = {n['uuid'] for n in plan_nodes}
+        resub_plan_nodes = {uuid: [] for uuid in unique_uuids}
         
         for n in plan_nodes:
             if n['inactive_date'] < now:
-                resub_nodes.append(n['node_address'])
-                resub_plan_nodes[n['uuid']] = deepcopy(resub_nodes)
+                for key in resub_plan_nodes.keys():
+                    if key == n['uuid']:
+                        resub_plan_nodes[key].append(n['node_address'])
+
         
         resub = self.__remove_duplicates(resub_plan_nodes)
         return resub
     
     def __remove_duplicates(self, test):
         for key in test:
-            print(f"plan: {key}, subs: {test[key]}")
+            print(f"[pns]: plan: {key}, subs: {test[key]}")
             test[key] = [item for item in test[key] if sum(item in test[other_key] for other_key in test if other_key != key) == 0]
             test[key] = list(set(test[key]))
         
