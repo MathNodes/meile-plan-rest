@@ -25,6 +25,7 @@ from subprocess import Popen
 from time import sleep
 import requests
 import grpc
+from copy import deepcopy
 
 MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
@@ -99,7 +100,7 @@ class PlanSubscribe():
         for n in plan_nodes:
             if n['inactive_date'] < now:
                 resub_nodes.append(n['node_address'])
-                resub_plan_nodes[n['uuid']] = resub_nodes
+                resub_plan_nodes[n['uuid']] = deepcopy(resub_nodes)
         
         resub = self.__remove_duplicates(resub_plan_nodes)
         return resub
