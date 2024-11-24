@@ -24,3 +24,4 @@ dbDIR              = '/home/' + str(pwd.getpwuid(os.getuid())[0]) + '/dbs'
 sentinelhub        = "/home/" + str(pwd.getpwuid(os.getuid())[0]) + "/go/bin/sentinelhub"
 COINSTATS_API_KEYS = [""]
 HELPERS            = "/home/" + str(pwd.getpwuid(os.getuid())[0]) + '/api/helpers'
+MAX_PRICE          = 15

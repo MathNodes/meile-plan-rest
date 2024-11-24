@@ -127,30 +127,4 @@ if __name__ == "__main__":
     subs_table = Unsub.get_subscription_table(db)
     Unsub.deactivate_expired_subscriptions(db, subs_table)
         
-        cmd)
-                    child.logfile = ofile
-                    
-                    child.expect("Enter .*")
-                    child.sendline(scrtxxs.HotWalletPW)
-                    child.expect(pexpect.EOF)
-                    
-                    
-                    ofile.flush()
-                    ofile.close()
-                except Exception as e:
-                    print(f'ERROR UNSUBING: {str(e)}')
-                    continue
-                '''
-                print("Setting sub to inactive...")
-                self.update_sub_table(sub,db)
-                sleep(10)                   
-        print("Done.")        
-                
-                
-if __name__ == "__main__":
-    Unsub = PurgeExpiredSubs()
-    db = Unsub.connDB()
-    subs_table = Unsub.get_subscription_table(db)
-    Unsub.deactivate_expired_subscriptions(db, subs_table)
-        
         
