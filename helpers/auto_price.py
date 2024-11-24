@@ -12,10 +12,9 @@ from statistics import mean
 
 
 COINSTATS_API = "https://openapiv1.coinstats.app/coins/price/avg?coinId=%s&timestamp=%s"
-
 COINS = {'sentinel' : 'dvpn' }
-
 SATOSHI = 1000000
+VERSION = 20241124.1851
 
 class AutoPrice():
     
