@@ -15,13 +15,13 @@ from sentinel_sdk.utils import search_attribute
 
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
 
-VERSION = 20240417.235040
+VERSION = 20241124.1758
 
 class PurgeExpiredSubs():
     
     def __init__(self):
-        self.__deallocate_cmd = '%s tx vpn subscription allocate --from "%s" --gas-prices "0.3udvpn" --node "%s" --keyring-dir "%s" --keyring-backend "file" --chain-id "%s" --yes %s "%s" 0'
-        self.__unsubLog = path.join(scrtxxs.LogDIR, "meile_unsub.log")
+        unsubLog = path.join(scrtxxs.LogDIR, "meile_unsub.log")
+        self.LOGFILE = open(unsubLog, "a+")
         
         keyring = self.__keyring(scrtxxs.HotWalletPW)
         private_key = keyring.get_password("meile-plan", scrtxxs.WalletName)        
@@ -65,10 +65,11 @@ class PurgeExpiredSubs():
     
     def deactivate_expired_subscriptions(self, db, subs_table):
         NOW = datetime.now()
-        print("Removing Allocations...")        
+        self.LOGFILE.write(f"-----------------------------{NOW}-------------------------------------\n")
+        self.LOGFILE.write("[pes]: Removing Allocations...\n")        
         for sub in subs_table:
             if sub['expires'] < NOW:
-                print("Querying allocation...")
+                self.LOGFILE.write(f"[pes]: ({sub['wallet']}) Querying allocation...\n")
                 
                 try:
                     allocation = self.sdk.subscriptions.QueryAllocation(address=sub['wallet'], 
@@ -76,13 +77,13 @@ class PurgeExpiredSubs():
                                                                         )
                     
                     ubytes = int(allocation.utilised_bytes)
-                    print(f"Utilised bytes: {ubytes}")
+                    self.LOGFILE.write(f"({sub['wallet']}) Utilised bytes: {ubytes}\n")
                 except Exception as e:
-                    print(str(e))
-                    print("Could not get allocation amt... skipping")
+                    self.LOGFILE.write(f"{str(e)}\n")
+                    self.LOGFILE.write("Could not get allocation amt... skipping\n")
                     continue
                 
-                print(f"Unallocating; {sub}")
+                self.LOGFILE.write(f"[pes]: Unallocating; {sub}\n")
                 
                 try:
                 
@@ -97,37 +98,36 @@ class PurgeExpiredSubs():
                                                          )
                     
                     if tx.get("log", None) is not None:
-                        print(tx["log"])
+                        self.LOGFILE.write(f"{tx['log']}\n")
                         continue
                     if tx.get("hash", None) is not None:
                         tx_response = self.sdk.subscriptions.wait_for_tx(tx['hash'], timeout=30)
-                        print(type(tx_response))
-                        print(json.dumps(tx_response))
+                        self.LOGFILE.write(f"[pes]: {json.dumps(tx_response)}\n")
                     else:
-                        print("Error getting tx response... Skipping...")
+                        self.LOGFILE.write("[pes]: Error getting tx response... Skipping...\n")
                         continue
                     
                         
                 except grpc.RpcError as e:
                     print(e.details())
-                    print("Skipping...")
+                    self.LOGFILE.write("[pes]: GRPC Error...Skipping...\n")
                     continue
                     
+                self.LOGFILE.write(f"[pes]: ({sub['wallet']}) Setting sub to inactive...\n")
+                self.update_sub_table(sub,db)
+                sleep(10)                   
+        self.LOGFILE.write("[pes]: Done.\n")
+        self.LOGFILE.flush()
+        self.LOGFILE.close()        
                 
-                '''
-                deallocate_cmd = self.__deallocate_cmd % (scrtxxs.sentinelhub,
-                                         scrtxxs.WalletName,
-                                         scrtxxs.RPC,
-                                         scrtxxs.KeyringDIR,
-                                         scrtxxs.CHAINID,
-                                         sub['subscription_id'],
-                                         sub['wallet'])
                 
-                print(deallocate_cmd)
-                
-                try: 
-                    ofile = open(self.__unsubLog, 'ab+')                    
-                    child = pexpect.spawn(deallocate_cmd)
+if __name__ == "__main__":
+    Unsub = PurgeExpiredSubs()
+    db = Unsub.connDB()
+    subs_table = Unsub.get_subscription_table(db)
+    Unsub.deactivate_expired_subscriptions(db, subs_table)
+        
+        cmd)
                     child.logfile = ofile
                     
                     child.expect("Enter .*")
