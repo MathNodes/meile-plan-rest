@@ -30,12 +30,17 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
 GRPC = scrtxxs.GRPC_MN
 SSL = True
-VERSION = 20240514.2101
+VERSION = 20241124.1847
 
 class WinstonWolfeNodes():
     
     def __init__(self, keyring_passphrase, wallet_name, seed_phrase = None):
         self.wallet_name = wallet_name
+        
+        unsubLog = path.join(scrtxxs.LogDIR, "remove-dead-nodes.log")
+        self.LOGFILE = open(unsubLog, "a+")
+        NOW = datetime.now()
+        self.LOGFILE.write(f"----------------------------------{NOW}-------------------------------------\n")
         
         if seed_phrase:
             seed_bytes = Bip39SeedGenerator(seed_phrase).Generate()
@@ -75,7 +80,7 @@ class WinstonWolfeNodes():
         
     def QueryCorpseNodesInPlan(self):
         
-        query = "SELECT * FROM plan_node_subscriptions WHERE inactive_date < NOW();"
+        query = "SELECT * FROM plan_node_subscriptions WHERE inactive_date < NOW() - INTERVAL 7 DAY;"
         
         c = self._db.cursor()
         c.execute(query)
@@ -97,7 +102,7 @@ class WinstonWolfeNodes():
             node['address'] = dn['node_address']
             
             try:
-                print(f"[rdn]: Removing {dn['node_address']} from plan {dn['plan_id']}, uuid {dn['uuid']}...")
+                self.LOGFILE.write(f"[rdn]: Removing {dn['node_address']} from plan {dn['plan_id']}, uuid {dn['uuid']}...\n")
                 
                 tx = self.sdk.plans.UnlinkNode(dn['plan_id'],
                                           dn['node_address'], 
@@ -108,17 +113,17 @@ class WinstonWolfeNodes():
                 
                 if tx.get("hash", None) is not None:
                     tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
-                    print(f"[rdn]: {tx_response}")
+                    self.LOGFILE.write(f"[rdn]: {tx_response}\n")
                     removed_nodes.append(node)
                 
             except grpc.RpcError as e:
-                print(f"[rdn]: {e.details()}")
+                self.LOGFILE.write(f"[rdn]: {e.details()}\n")
                 error_message = e.details()
-                print(f"[rdn]: Sleeping for 15s...")
+                self.LOGFILE.write(f"[rdn]: Sleeping for 15s...\n")
                 sleep(15)
                 continue
                
-        print(f"[rdn]: {removed_nodes}")
+        self.LOGFILE.write(f"[rdn]: {removed_nodes}\n")
         return removed_nodes
            
     def WinstonWolfeDeadNodes(self, deadnodes):
@@ -130,20 +135,22 @@ class WinstonWolfeNodes():
             query = f"DELETE FROM plan_nodes WHERE uuid = '{uuid}' AND node_address = '{address}';"
             query2 = f"DELETE FROM plan_node_subscriptions WHERE uuid = '{uuid}' AND node_address = '{address}';"
             
-            print(f"[rdn]: Removing {address} from DB...")
-            print(f"[rdn]: {query}")
-            print(f"[rdn]: {query2}")
+            self.LOGFILE.write(f"[rdn]: Removing {address} from DB...\n")
+            self.LOGFILE.write(f"[rdn]: {query}\n")
+            self.LOGFILE.write(f"[rdn]: {query2}\n")
             
             c.execute(query)
             self._db.commit()
             c.execute(query2)
             self._db.commit()
-            
+        self.LOGFILE.write("[rdn]: Done.\n")
+        self.LOGFILE.flush()
+        self.LOGFILE.close()
 if __name__ == "__main__":
     wwn = WinstonWolfeNodes(scrtxxs.HotWalletPW, scrtxxs.WalletName, None)
     
     removed_nodes = wwn.RemoveCorpseNodesFromPlan(wwn.QueryCorpseNodesInPlan())
     wwn.WinstonWolfeDeadNodes(removed_nodes)
-    print("[rdn]: Done.")
+    
     
             
