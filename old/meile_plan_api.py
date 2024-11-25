@@ -2,9 +2,6 @@ import os
 import jwt
 import time
 import pexpect
-from urllib.parse import urlparse
-from os import path
-import json
 
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -16,18 +13,10 @@ from passlib.apps import custom_app_context as pwd_context
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from sentinel_sdk.sdk import SDKInstance
-from sentinel_sdk.types import TxParams
-from sentinel_sdk.utils import search_attribute
-from sentinel_protobuf.cosmos.base.v1beta1.coin_pb2 import Coin
-from mospy import Transaction
-from keyrings.cryptfile.cryptfile import CryptFileKeyring
-from grpc import RpcError
-
 import scrtxxs
 
 
-VERSION=20240710.0029
+VERSION=20240503.2336
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -58,18 +47,6 @@ app.config['MYSQL_DATABASE_HOST'] = scrtxxs.MySQLHost
 
 db = SQLAlchemy(app)
 auth = HTTPBasicAuth()
-
-def __keyring(keyring_passphrase: str):
-        kr = CryptFileKeyring()
-        kr.filename = "keyring.cfg"
-        kr.file_path = path.join(scrtxxs.PlanKeyringDIR, kr.filename)
-        kr.keyring_key = keyring_passphrase
-        return kr 
-
-keyring = __keyring(scrtxxs.HotWalletPW)
-private_key = keyring.get_password("meile-plan", scrtxxs.WalletName)        
-grpcaddr, grpcport = urlparse(scrtxxs.GRPC_DEV).netloc.split(":")
-sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=True)
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -182,7 +159,6 @@ def CheckRenewalStatus(subid, wallet):
 def add_wallet_to_plan():
     status  = False
     renewal = False
-    hash = "0x0"
     try: 
         JSON      = request.json
         wallet    = JSON['data']['wallet']
@@ -211,7 +187,7 @@ def add_wallet_to_plan():
         print(PlanTX)
         return jsonify(PlanTX)
     
-    renewal,subscription_date, expiration = CheckRenewalStatus(sub_id, wallet)
+    renewal,subscription_date, expiration = CheckRenewalStatus(sub_id, wallet) 
     
     now = datetime.now()
     if expiration:
@@ -224,43 +200,53 @@ def add_wallet_to_plan():
         expires = now + relativedelta(months=+duration)
     
     
-    WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log") 
-    log_file_descriptor = open(WalletLogFile, "a+")
-
-    tx_params = TxParams(
-                gas=150000,
-                gas_multiplier=1.2,
-                fee_amount=31415,
-                denom="udvpn"
-                )
-           
-    tx = sdk.subscriptions.Allocate(address=wallet, bytes=str(scrtxxs.BYTES), id=sub_id, tx_params=tx_params)
+    WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log")
+    add_to_plan_cmd = '%s tx vpn subscription allocate --from "%s" --gas-prices "0.3udvpn" --node "%s" --keyring-dir "%s" --keyring-backend "file" --chain-id "%s" --yes %s "%s" %d' % (scrtxxs.sentinelhub,
+                                                                                                                                                                      scrtxxs.WalletName,
+                                                                                                                                                                      scrtxxs.RPC,
+                                                                                                                                                                      scrtxxs.KeyringDIR,
+                                                                                                                                                                      scrtxxs.CHAINID,
+                                                                                                                                                                      sub_id,
+                                                                                                                                                                      wallet,
+                                                                                                                                                                      scrtxxs.BYTES)
     
-    if tx.get("log", None) is not None:
+    
+    
+    
+    print(add_to_plan_cmd)
+    try: 
+        ofile = open(WalletLogFile, 'ab+')
+        
+        child = pexpect.spawn(add_to_plan_cmd)
+        child.logfile = ofile
+        
+        child.expect("Enter .*")
+        child.sendline(keyring_passphrase)
+        child.expect(pexpect.EOF)
+        
+        
+        ofile.flush()
+        ofile.close()
+        ofile.close()
+        with open(WalletLogFile ,'r+') as rfile:
+            last_line = rfile.readlines()[-1]
+            if 'txhash' in last_line:
+                tx = last_line.split(':')[-1].rstrip().lstrip()
+                print(f"{wallet} added to plan: {sub_id}, plan_id: {plan_id}, {duration} months, hash: {tx}")
+            else:
+                tx = 'none'
+        
+        rfile.close()
+        status = True
+        message = "Success."
+    except Exception as e:
+        print(str(e))
         status = False
         message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."
         expires = None
         tx = "None"
         PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
         print(PlanTX)
-        log_file_descriptor.write(json.dumps(PlanTX))
-        return jsonify(PlanTX)
-            
-
-    if tx.get("hash", None) is not None:
-        tx_response = sdk.nodes.wait_transaction(tx["hash"])
-        print(tx_response)
-        log_file_descriptor.write(json.dumps(tx_response) + '\n')
-        message = "Success."
-        hash = tx['hash']
-        status = True
-    else:
-        status = False
-        message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."
-        expires = None
-        tx = "None"
-        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
-        log_file_descriptor.write(json.dumps(PlanTX) + '\n')
         return jsonify(PlanTX)
     
     if renewal and subscription_date is not None:
@@ -287,46 +273,24 @@ def add_wallet_to_plan():
         tx = None
         expires = None
         
-    tx = Transaction(
-           account=sdk._account,
-           fee=Coin(denom=tx_params.denom, amount=f"{tx_params.fee_amount}"),
-           gas=tx_params.gas,
-           protobuf="sentinel",
-           chain_id="sentinelhub-2",
-           memo=f"Meile Gas Favor",
-       )
-    tx.add_msg(
-        tx_type='transfer',
-        sender=sdk._account,
-        receipient=wallet,
-        amount=1000000,
-        denom="udvpn",
-    )
+    transfer_cmd = '%s tx bank send --gas auto --gas-prices 0.2udvpn --gas-adjustment 2.0 --yes %s %s 1000000udvpn --node "%s"' % (scrtxxs.sentinelhub,
+                                                                                                                                   scrtxxs.WalletAddress,
+                                                                                                                                   wallet,
+                                                                                                                                   scrtxxs.RPC)
     
-    sdk._client.load_account_data(account=sdk._account)
-    
-    tx_height = 0
-    try:
-        tx = sdk._client.broadcast_transaction(transaction=tx)
-    except RpcError as rpc_error:
-        details = rpc_error.details()
-        print("details", details)
-        print("code", rpc_error.code())
-        print("debug_error_string", rpc_error.debug_error_string())
-        return (False, {'hash' : None, 'success' : False, 'message' : details})
-
-    if tx.get("log", None) is None:
-        tx_response = sdk.nodes.wait_for_tx(tx["hash"])
-        tx_height = tx_response.get("txResponse", {}).get("height", 0) if isinstance(tx_response, dict) else tx_response.tx_response.height
-        log_file_descriptor.write(json.dumps(tx_response) + '\n')
-        log_file_descriptor.write(tx_height + '\n')
-        print(f'Successfully sent 1dvpn to: {wallet}, height: {tx_height}')
+    print(transfer_cmd)
+    try: 
+        child = pexpect.spawn(transfer_cmd)
         
-    PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : hash, 'message' : message, 'expires' : str(expires)}
-    log_file_descriptor.write(json.dumps(PlanTX) + '\n')
-    log_file_descriptor.close()
+        child.expect("Enter .*")
+        child.sendline(keyring_passphrase)
+        child.expect(pexpect.EOF)    
+    except Exception as e:
+        print(str(e))
+        message = message + "Success adding wallet to plan. Error on sending 1dvpn to wallet address."
+    print(f'Successfully sent 1dvpn to: {wallet}')
+    PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
     return jsonify(PlanTX)
-    
     
     
 @app.route('/v1/plans', methods=['GET'])
@@ -390,7 +354,7 @@ def get_nodes(uuid):
         return jsonify(result)
     except Exception as e:
         print(str(e))
-        abort(404)      
+        abort(404)    
     
 def UpdateMeileSubscriberDB():
     pass
