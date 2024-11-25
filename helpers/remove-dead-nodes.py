@@ -80,7 +80,7 @@ class WinstonWolfeNodes():
         
     def QueryCorpseNodesInPlan(self):
         
-        query = "SELECT * FROM plan_node_subscriptions WHERE inactive_date < NOW() - INTERVAL 7 DAY;"
+        query = f"SELECT * FROM plan_node_subscriptions WHERE inactive_date < NOW() - INTERVAL {scrtxxs.RDN_INTERVAL} DAY;"
         
         c = self._db.cursor()
         c.execute(query)
