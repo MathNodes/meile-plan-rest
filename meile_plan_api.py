@@ -27,7 +27,7 @@ from grpc import RpcError
 import scrtxxs
 
 
-VERSION=20240710.0029
+VERSION=20241222.2127
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -201,9 +201,9 @@ def add_wallet_to_plan():
         print(PlanTX)
         return jsonify(PlanTX)    
     
-    cost, denom = GetPlanCostDenom(uuid)
-    print(f"Cost: {cost}, denom: {denom}")
-    if not cost or not denom:
+    cost, plan_denom = GetPlanCostDenom(uuid)
+    print(f"Cost: {cost}, denom: {plan_denom}")
+    if not cost or not plan_denom:
         status = False
         message = "No plan found in Database. Wallet not added to non-existing plan"
         tx = "None"
@@ -266,7 +266,7 @@ def add_wallet_to_plan():
     if renewal and subscription_date is not None:
         query = '''
                 UPDATE meile_subscriptions 
-                SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %d, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s"
+                SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %d, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s, active = 1"
                 WHERE wallet = "%s" AND subscription_id = %d
                 ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, sub_id) 
                 
