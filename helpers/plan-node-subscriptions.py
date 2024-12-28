@@ -31,7 +31,7 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
 GRPC = scrtxxs.GRPC_MN
 SSL = True
-VERSION = 20241114.1614
+VERSION = 20241228.1819
 
 class PlanSubscribe():
     
@@ -125,36 +125,55 @@ class PlanSubscribe():
             # gas=ConfParams.GAS,
             gas_multiplier=1.15
         )
-        while error_message:
-            try: 
-                tx = self.sdk.nodes.SubscribeToNode(
-                    node_address=nodeaddress,
-                    gigabytes=0,  # TODO: review this please
-                    hours=int(duration),  # TODO: review this please
-                    denom="udvpn",
-                    tx_params=tx_params,
+        
+        try: 
+            tx = self.sdk.nodes.SubscribeToNode(
+                node_address=nodeaddress,
+                gigabytes=0,  # TODO: review this please
+                hours=int(duration),  # TODO: review this please
+                denom="udvpn",
+                tx_params=tx_params,
+            )
+            
+            if tx.get("log", None) is not None:
+                return(False, tx["log"])
+    
+            if tx.get("hash", None) is not None:
+                tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
+                print(tx_response)
+                subscription_id = search_attribute(
+                    tx_response, "sentinel.node.v2.EventCreateSubscription", "id"
                 )
+                if subscription_id:
+                    sleep(4)
+                    try:
+                        sub = self.sdk.QuerySubscription(subscription_id=int(subscription_id))
+                        inactive_at = datetime.fromtimestamp(sub.base.inactive_at.seconds).strftime('%Y-%m-%d %H:%M:%S')
+                    except:
+                        now = datetime.now()
+                        inactive_at = now + timedelta(hours=scrtxxs.HOURS)
+                        inactive_at = inactive_at.strftime('%Y-%m-%d %H:%M:%S')
+                        
+                    self.UpdateNodePlanDB(nodeaddress, inactive_at)
+                        
+                    return (True, subscription_id)
+    
+            return(False, "Tx error")
+        except grpc.RpcError as e:
+            print(e.details())
+            
+            
+    def UpdateNodePlanDB(self, nodeaddress, inactive_at):
+        c = self._db.cursor()
+        
+        q = '''
+            UPDATE plan_node_subscriptions SET inactive_date = '%s' WHERE node_address = '%s';
+            ''' % (inactive_at, nodeaddress)
                 
-                if tx.get("log", None) is not None:
-                    return(False, tx["log"])
-        
-                if tx.get("hash", None) is not None:
-                    tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
-                    print(tx_response)
-                    subscription_id = search_attribute(
-                        tx_response, "sentinel.node.v2.EventCreateSubscription", "id"
-                    )
-                    if subscription_id:
-                        error_message = ""
-                        return (True,subscription_id)
-        
-                return(False, "Tx error")
-            except grpc.RpcError as e:
-                print(e.details())
-                error_message = e.details()
-                print("Sleeping for 15s...")
-                sleep(15)
-                continue
+        print(f"[pns]: {q}")
+        c.execute(q)
+        self._db.commit()
+            
 
     def add_node_to_plan(self, plan_id, node):
         tx_params = TxParams(
