@@ -29,9 +29,9 @@ import grpc
 
 MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
-GRPC = scrtxxs.GRPC_MN
+GRPC = scrtxxs.GRPC_DEV
 SSL = True
-VERSION = 20241228.1819
+VERSION = 20250215.0245
 
 class PlanSubscribe():
     
@@ -223,7 +223,7 @@ if __name__ == "__main__":
     
     parser.add_argument('--file', help="--file <nodefile>, absolute path of a list of sentnode... addresses separated by newline", metavar="file")
     parser.add_argument('--seed', action='store_true',help='set if you are specifying a seedphrase', default=False)
-    parser.add_argument('--uuid', help="--uuid <uuid>, uuid of plan to subscribe nodes to", metavar="uuid")
+    parser.add_argument('--uuid', help="--uuid <uuid1,uuid2...>, uuid of plan(s) to subscribe nodes to", metavar="uuid")
     args = parser.parse_args()
     
     if args.seed:
@@ -232,8 +232,10 @@ if __name__ == "__main__":
         ps = PlanSubscribe(scrtxxs.HotWalletPW, scrtxxs.WalletName, None)
     
     if args.file and args.uuid:
-        plan_id = ps.GetPlanID(args.uuid)['plan_id']
-        
+        plan_id = []
+        for uuid in args.uuid.split(','):
+            plan_id.append(ps.GetPlanID(uuid)['plan_id'])
+            
         with open(args.file, 'r') as nodefile:
             nodes = nodefile.readlines()
             
@@ -244,20 +246,21 @@ if __name__ == "__main__":
             print("[pns]: Waiting 5s...")
             sleep(5)
             print(f"[pns]: Adding {n} to plan {plan_id},{args.uuid}...")
-            ps.add_node_to_plan(plan_id, n)
+            for pid in plan_id:
+                ps.add_node_to_plan(pid, n)
             
             
+        for uuid in args.uuid.split(','):
+            print("[pns]: Inserting nodes in plan DB...", end='')    
+            run_insert(args.file, uuid)
+            sleep(2)
+            print("[pns]: Done.")
+            print("[pns]: Wainting...")
+            sleep(20)
+            print("[pns]: Updating plan_node_subscriptions...")
+            run_update(uuid)
+            print("[pns]: Done.")    
             
-        print("[pns]: Inserting nodes in plan DB...", end='')    
-        run_insert(args.file, args.uuid)
-        sleep(2)
-        print("[pns]: Done.")
-        print("[pns]: Wainting...")
-        sleep(20)
-        print("[pns]: Updating plan_node_subscriptions...")
-        run_update(args.uuid)
-        print("[pns]: Done.")    
-        
     else:
         print("[pns]: Computing Resubscriptions...")
         resub_plan_nodes = ps.ComputeResub(ps.GetPlanNodes())

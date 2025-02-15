@@ -11,7 +11,7 @@ import pymysql
 import sys
 
 UUID = ""
-VERSION = 20240423.0019
+VERSION = 20250215.0305
 GRPC = scrtxxs.GRPC_MN
 
 class UpdateNodeScriptions():
@@ -98,7 +98,20 @@ class UpdateNodeScriptions():
             c.execute(q)
             print(f"[uns]: {q}")
             self._db.commit()
+            
+    def RemoveNodeHangers(self):
+        c = self._db.cursor()
         
+        query = '''        
+        DELETE pn
+        FROM plan_nodes pn
+        LEFT JOIN plan_node_subscriptions pns ON pn.node_address = pns.node_address
+        WHERE pns.node_address IS NULL;
+        '''
+        
+        c.execute(query)
+        self._db.commit()
+
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Meile Plan Sub Updater - v0.3 - freQniK")
@@ -119,3 +132,4 @@ if __name__ == "__main__":
     subs_on_plan = uns.qs_on_plan(nodes)
     print("[uns]: Updating node inactive date on plan in database...")
     uns.UpdateSubsExpiration(subs_on_plan, args.uuid)
+    uns.RemoveNodeHangers()
