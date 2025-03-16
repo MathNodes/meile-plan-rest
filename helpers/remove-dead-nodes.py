@@ -28,9 +28,9 @@ import grpc
 
 MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
-GRPC = scrtxxs.GRPC_MN
+GRPC = scrtxxs.GRPC_DEV
 SSL = True
-VERSION = 20241124.1847
+VERSION = 20250215.0220
 
 class WinstonWolfeNodes():
     
