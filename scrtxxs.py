@@ -3,6 +3,8 @@ import os
 
 WalletAddress      = "sent..."
 WalletName         = "Name"
+AllocWalletName    = "Name2"
+AllocSeed          = "seed phrase"
 HotWalletPW        = "password"
 SQLAlchemyScrtKey  = 'sql_scrt_key'
 MySQLHost          = "127.0.0.1"
