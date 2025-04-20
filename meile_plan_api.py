@@ -24,6 +24,9 @@ from mospy import Transaction
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
 from grpc import RpcError
 
+
+from pms.plan_node_subscriptions import PlanSubscribe
+
 import scrtxxs
 
 
@@ -70,6 +73,8 @@ keyring = __keyring(scrtxxs.HotWalletPW)
 private_key = keyring.get_password("meile-plan", scrtxxs.WalletName)        
 grpcaddr, grpcport = urlparse(scrtxxs.GRPC_DEV).netloc.split(":")
 sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=True)
+alloc_private_key = keyring.get_password("meile-plan", scrtxxs.AllocWalletName)
+sdkAlloc = SDKInstance(grpcaddr, int(grpcport), secret=alloc_private_key, ssl=True)
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -177,6 +182,70 @@ def CheckRenewalStatus(subid, wallet):
     else: 
         return False, None, None
     
+def AllocateTX(sdk, sub_id, wallet, size=scrtxxs.BYTES):
+    
+    tx_params = TxParams(
+                gas=150000,
+                gas_multiplier=1.2,
+                fee_amount=31415,
+                denom="udvpn"
+                )
+    
+    tx = sdk.subscriptions.Allocate(address=wallet, bytes=str(size), id=sub_id, tx_params=tx_params)
+    
+    if tx.get("log", None) is not None:
+        message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."        
+        return {"status" : False, "message" : message, "hash" : "0x0", "tx_response" : None}
+    
+    if tx.get("hash", None) is not None:
+        tx_response = sdk.nodes.wait_transaction(tx["hash"])
+        return {"status" : True, "message" : "Success.", "hash" : tx['hash'], "tx_response" : tx_response}
+    
+    
+def FeeGrant(wallet):
+    
+    tx_params = TxParams(
+                gas=150000,
+                gas_multiplier=1.2,
+                fee_amount=31415,
+                denom="udvpn"
+                )
+    
+    tx = Transaction(
+           account=sdk._account,
+           fee=Coin(denom=tx_params.denom, amount=f"{tx_params.fee_amount}"),
+           gas=tx_params.gas,
+           protobuf="sentinel",
+           chain_id="sentinelhub-2",
+           memo=f"Meile Gas Favor",
+       )
+    tx.add_msg(
+        tx_type='transfer',
+        sender=sdk._account,
+        receipient=wallet,
+        amount=1000000,
+        denom="udvpn",
+    )
+    
+    sdk._client.load_account_data(account=sdk._account)
+    
+    tx_height = 0
+    
+    try:
+        tx = sdk._client.broadcast_transaction(transaction=tx)
+    except RpcError as rpc_error:
+        details = rpc_error.details()
+        print("details", details)
+        print("code", rpc_error.code())
+        print("debug_error_string", rpc_error.debug_error_string())
+        return {"tx_response" : None, "height" : None, "status" : False}
+
+    if tx.get("log", None) is None:
+        tx_response = sdk.nodes.wait_for_tx(tx["hash"])
+        tx_height = tx_response.get("txResponse", {}).get("height", 0) if isinstance(tx_response, dict) else tx_response.tx_response.height
+        return {"tx_response" : tx_response, "height" : tx_height, "status" : True}
+        
+    
 @app.route('/v1/add', methods=['POST'])
 @auth.login_required
 def add_wallet_to_plan():
@@ -223,45 +292,39 @@ def add_wallet_to_plan():
     else:
         expires = now + relativedelta(months=+duration)
     
-    
     WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log") 
     log_file_descriptor = open(WalletLogFile, "a+")
-
-    tx_params = TxParams(
-                gas=150000,
-                gas_multiplier=1.2,
-                fee_amount=31415,
-                denom="udvpn"
-                )
-           
-    tx = sdk.subscriptions.Allocate(address=wallet, bytes=str(scrtxxs.BYTES), id=sub_id, tx_params=tx_params)
     
-    if tx.get("log", None) is not None:
-        status = False
-        message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."
+    result = AllocateTX(sdk, sub_id, wallet)
+    
+    if not result['status']:
         expires = None
-        tx = "None"
-        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
+        message = result["message"]
+        PlanTX = {'status' : result["status"],
+                  'wallet' : wallet, 
+                  'planid' : plan_id, 
+                  'id' : sub_id, 
+                  'duration' : duration, 
+                  'tx' : result["hash"], 
+                  'message' : message, 
+                  'expires' : expires}
         print(PlanTX)
-        log_file_descriptor.write(json.dumps(PlanTX))
-        return jsonify(PlanTX)
-            
-
-    if tx.get("hash", None) is not None:
-        tx_response = sdk.nodes.wait_transaction(tx["hash"])
-        print(tx_response)
-        log_file_descriptor.write(json.dumps(tx_response) + '\n')
-        message = "Success."
-        hash = tx['hash']
-        status = True
-    else:
-        status = False
-        message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."
-        expires = None
-        tx = "None"
-        PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : tx, 'message' : message, 'expires' : expires}
         log_file_descriptor.write(json.dumps(PlanTX) + '\n')
         return jsonify(PlanTX)
+    
+    else:
+        print(result["tx_response"])
+        
+        PlanTX = {'status' : result["status"],
+                  'wallet' : wallet, 
+                  'planid' : plan_id, 
+                  'id' : sub_id, 
+                  'duration' : duration, 
+                  'tx' : result["hash"], 
+                  'message' : message, 
+                  'expires' : str(expires)}
+        log_file_descriptor.write(json.dumps(result["tx_response"]) + '\n')
+        log_file_descriptor.write(json.dumps(PlanTX) + '\n')
     
     if renewal and subscription_date is not None:
         query = '''
@@ -278,52 +341,27 @@ def add_wallet_to_plan():
 
 
     print("Updating Subscription Table...")
+    
     try:
         UpdateDBTable(query)    
     except Exception as e:
         print(str(e))
-        status = False
-        message = "Error updating subscription table. Please contact support@mathnodes.com for more information."
-        tx = None
-        expires = None
+        log_file_descriptor.write("ERROR ADDING WALLET TO SUBSCRIPTION DATABASE" + '\n')
         
-    tx = Transaction(
-           account=sdk._account,
-           fee=Coin(denom=tx_params.denom, amount=f"{tx_params.fee_amount}"),
-           gas=tx_params.gas,
-           protobuf="sentinel",
-           chain_id="sentinelhub-2",
-           memo=f"Meile Gas Favor",
-       )
-    tx.add_msg(
-        tx_type='transfer',
-        sender=sdk._account,
-        receipient=wallet,
-        amount=1000000,
-        denom="udvpn",
-    )
+        
+        
+    result = FeeGrant(wallet)
     
-    sdk._client.load_account_data(account=sdk._account)
-    
-    tx_height = 0
-    try:
-        tx = sdk._client.broadcast_transaction(transaction=tx)
-    except RpcError as rpc_error:
-        details = rpc_error.details()
-        print("details", details)
-        print("code", rpc_error.code())
-        print("debug_error_string", rpc_error.debug_error_string())
-        return (False, {'hash' : None, 'success' : False, 'message' : details})
+    if result['status']:    
+        log_file_descriptor.write(json.dumps(result["tx_response"]) + '\n')
+        log_file_descriptor.write(result["height"] + '\n')
+        print(f'Successfully sent 1dvpn to: {wallet}, height: {result["height"]}')
+    else:
+        log_message = f'Error sending 1dvpn to: {wallet}, height: {result["height"]}'
+        print(log_message)
+        log_file_descriptor.write(log_message + '\n')
 
-    if tx.get("log", None) is None:
-        tx_response = sdk.nodes.wait_for_tx(tx["hash"])
-        tx_height = tx_response.get("txResponse", {}).get("height", 0) if isinstance(tx_response, dict) else tx_response.tx_response.height
-        log_file_descriptor.write(json.dumps(tx_response) + '\n')
-        log_file_descriptor.write(tx_height + '\n')
-        print(f'Successfully sent 1dvpn to: {wallet}, height: {tx_height}')
-        
-    PlanTX = {'status' : status, 'wallet' : wallet, 'planid' : plan_id, 'id' : sub_id, 'duration' : duration, 'tx' : hash, 'message' : message, 'expires' : str(expires)}
-    log_file_descriptor.write(json.dumps(PlanTX) + '\n')
+
     log_file_descriptor.close()
     return jsonify(PlanTX)
     
@@ -391,6 +429,33 @@ def get_nodes(uuid):
     except Exception as e:
         print(str(e))
         abort(404)      
+        
+@app.route('/v1/allocate', methods=['POST'])
+@auth.login_required
+def allocate():
+    try: 
+        JSON      = request.json
+        wallet    = JSON['wallet']
+        GB        = int(JSON['GB']) 
+        address   = JSON['node']
+    except:
+        message = "error reading JSON"
+        return {'status' : False, 'message' : message}
+    
+    
+    ps = PlanSubscribe(scrtxxs.HotWalletPW, scrtxxs.AllocWalletName, None)
+    res = ps.subscribe_to_nodes_for_plan(address,GB=GB)
+    
+    if res[0]:
+        sub_id = res[1]
+    else:
+        message = "Error subscribing to node."
+        result = {"status" : False, "message" : message, "hash" : None, "tx_response" : None}
+        return jsonify(result)
+        
+    
+    res = AllocateTX(sdkAlloc, sub_id, wallet, GB*scrtxxs.ONE_GB)
+    return jsonify(res)
     
 def UpdateMeileSubscriberDB():
     pass

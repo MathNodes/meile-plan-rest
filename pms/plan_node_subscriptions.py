@@ -116,7 +116,7 @@ class PlanSubscribe():
         return test
 
     
-    def subscribe_to_nodes_for_plan(self, nodeaddress, duration):
+    def subscribe_to_nodes_for_plan(self, nodeaddress, duration=0, GB=0):
         error_message = "NotNone"
         
         tx_params = TxParams(
@@ -129,7 +129,7 @@ class PlanSubscribe():
         try: 
             tx = self.sdk.nodes.SubscribeToNode(
                 node_address=nodeaddress,
-                gigabytes=0,  # TODO: review this please
+                gigabytes=int(GB),  # TODO: review this please
                 hours=int(duration),  # TODO: review this please
                 denom="udvpn",
                 tx_params=tx_params,
@@ -241,7 +241,7 @@ if __name__ == "__main__":
             
         for n in nodes:
             print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {args.uuid}...")
-            response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
+            response = ps.subscribe_to_nodes_for_plan(n, duration=scrtxxs.HOURS)
             print(response)
             print("[pns]: Waiting 5s...")
             sleep(5)
@@ -283,7 +283,7 @@ if __name__ == "__main__":
                     pass
                     
                 print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
-                response = ps.subscribe_to_nodes_for_plan(n, scrtxxs.HOURS)
+                response = ps.subscribe_to_nodes_for_plan(n, duration=scrtxxs.HOURS)
                 print(f"[pns]: {response}")
         
         print("[pns]: Waiting....")

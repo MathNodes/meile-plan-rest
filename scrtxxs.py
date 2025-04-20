@@ -14,6 +14,7 @@ MySQLPassword      = 'password'
 MySQLDB            = 'db_name'
 #BYTES             = 1073741824000 # 1 TiB
 BYTES              = 10995116277760 # 10 TiB
+ONE_GB             = 1073741824 
 HOURS              = 360 # sub amount in hours
 RPC                = "https://rpc.mathnodes.com:443"
 GRPC               = "http://aimokoivunen.mathnodes.com:9090"
