@@ -183,6 +183,7 @@ def CheckRenewalStatus(subid, wallet):
         return False, None, None
     
 def AllocateTX(sdk, sub_id, wallet, size=scrtxxs.BYTES):
+    # Add logging
     
     tx_params = TxParams(
                 gas=150000,
@@ -436,15 +437,14 @@ def allocate():
     try: 
         JSON      = request.json
         wallet    = JSON['wallet']
-        GB        = int(JSON['GB']) 
+        GB        = int(JSON['gb']) 
         address   = JSON['node']
     except:
         message = "error reading JSON"
         return {'status' : False, 'message' : message}
     
-    
     ps = PlanSubscribe(scrtxxs.HotWalletPW, scrtxxs.AllocWalletName, None)
-    res = ps.subscribe_to_nodes_for_plan(address,GB=GB)
+    res = ps.subscribe_to_nodes_for_plan(address,GB=GB) # need to add logging to file for this routine
     
     if res[0]:
         sub_id = res[1]
