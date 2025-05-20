@@ -5,6 +5,8 @@ import pexpect
 from urllib.parse import urlparse
 from os import path
 import json
+import requests
+from requests.auth import HTTPBasicAuth as RequestsAuth
 
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -30,7 +32,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20241222.2127
+VERSION=20250517.2226
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -182,8 +184,8 @@ def CheckRenewalStatus(subid, wallet):
     else: 
         return False, None, None
     
-def AllocateTX(sdk, sub_id, wallet, size=scrtxxs.BYTES):
-    # Add logging
+def AllocateTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
+    # Add logging    
     
     tx_params = TxParams(
                 gas=150000,
@@ -434,6 +436,7 @@ def get_nodes(uuid):
 @app.route('/v1/allocate', methods=['POST'])
 @auth.login_required
 def allocate():
+    
     try: 
         JSON      = request.json
         wallet    = JSON['wallet']
@@ -447,15 +450,77 @@ def allocate():
     res = ps.subscribe_to_nodes_for_plan(address,GB=GB) # need to add logging to file for this routine
     
     if res[0]:
-        sub_id = res[1]
+        sub_id = int(res[1])
     else:
         message = "Error subscribing to node."
         result = {"status" : False, "message" : message, "hash" : None, "tx_response" : None}
         return jsonify(result)
         
-    
+    sleep(4)
     res = AllocateTX(sdkAlloc, sub_id, wallet, GB*scrtxxs.ONE_GB)
     return jsonify(res)
+
+@app.route('/v1/pirate/newaddress', methods=['GET'])
+@auth.login_required
+def get_new_zaddress():
+    url = "http://127.0.0.1:45453/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id": "meile",
+        "method": "z_getnewaddress",
+        "params": []
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.PIRATEUSER, scrtxxs.PIRATEPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(response.json())
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': None, 'error': response.status_code, 'id': 'meile'})
+    
+    
+@app.route('/v1/pirate/getbalance', methods=['POST'])
+@auth.login_required    
+def get_pirate_balance():
+    try:
+        JSON      = request.json
+        address   = JSON['address']
+        conf      = JSON['conf']
+    except Exception as e:
+        print(str(e))
+        return False
+    
+    url = "http://127.0.0.1:45453/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id":"meile", 
+        "method": "z_getbalance", 
+        "params": [address, conf] 
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.PIRATEUSER, scrtxxs.PIRATEPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(f"address: {address}\n response: {response.json()}")
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
+    
     
 def UpdateMeileSubscriberDB():
     pass
