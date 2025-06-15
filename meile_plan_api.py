@@ -32,7 +32,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20250517.2226
+VERSION=20250603.2322
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -275,6 +275,7 @@ def add_wallet_to_plan():
     
     cost, plan_denom = GetPlanCostDenom(uuid)
     print(f"Cost: {cost}, denom: {plan_denom}")
+    print(f"Paid: {amt_paid}, denom: {denom}")
     if not cost or not plan_denom:
         status = False
         message = "No plan found in Database. Wallet not added to non-existing plan"
@@ -301,30 +302,27 @@ def add_wallet_to_plan():
     result = AllocateTX(sdk, sub_id, wallet)
     
     if not result['status']:
-        expires = None
-        message = result["message"]
         PlanTX = {'status' : result["status"],
                   'wallet' : wallet, 
                   'planid' : plan_id, 
                   'id' : sub_id, 
                   'duration' : duration, 
                   'tx' : result["hash"], 
-                  'message' : message, 
-                  'expires' : expires}
+                  'message' : result["message"],
+                  'expires' : None}
         print(PlanTX)
         log_file_descriptor.write(json.dumps(PlanTX) + '\n')
         return jsonify(PlanTX)
     
     else:
         print(result["tx_response"])
-        
         PlanTX = {'status' : result["status"],
                   'wallet' : wallet, 
                   'planid' : plan_id, 
                   'id' : sub_id, 
                   'duration' : duration, 
                   'tx' : result["hash"], 
-                  'message' : message, 
+                  'message' : result["message"], 
                   'expires' : str(expires)}
         log_file_descriptor.write(json.dumps(result["tx_response"]) + '\n')
         log_file_descriptor.write(json.dumps(PlanTX) + '\n')
@@ -332,7 +330,7 @@ def add_wallet_to_plan():
     if renewal and subscription_date is not None:
         query = '''
                 UPDATE meile_subscriptions 
-                SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %d, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s, active = 1"
+                SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %d, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s", active = "1"
                 WHERE wallet = "%s" AND subscription_id = %d
                 ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, sub_id) 
                 
