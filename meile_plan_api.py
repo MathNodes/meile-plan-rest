@@ -520,6 +520,34 @@ def get_pirate_balance():
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
     
+    
+@app.route('/v1/pirate/getbalances', methods=['GET'])    
+def get_pirate_balances():
+    
+    url = "http://127.0.0.1:45453/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id":"meile", 
+        "method": "z_getbalances", 
+        "params": [True] 
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.PIRATEUSER, scrtxxs.PIRATEPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(f"response: {response.json()}")
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
+    
+    
 def UpdateMeileSubscriberDB():
     pass
 
