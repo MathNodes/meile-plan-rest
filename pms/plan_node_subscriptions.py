@@ -31,7 +31,7 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
 GRPC = scrtxxs.GRPC_DEV
 SSL = True
-VERSION = 20250512.1711
+VERSION = 20250713.2053
 
 class PlanSubscribe():
     
@@ -263,6 +263,7 @@ if __name__ == "__main__":
             print("[pns]: Done.")    
             
     else:
+        plan_id = []
         print("[pns]: Computing Resubscriptions...")
         resub_plan_nodes = ps.ComputeResub(ps.GetPlanNodes())
         print(f"[pns]: {resub_plan_nodes}")
@@ -270,6 +271,9 @@ if __name__ == "__main__":
         uuids = ''
         for plan,nodes in resub_plan_nodes.items():
             uuids = ','.join([uuids,plan])
+            for uuid in uuids.split(',')[1:]:
+                plan_id.append(ps.GetPlanID(uuid)['plan_id'])
+            
             for n in nodes:
                 print(f"[pns]: Checking if {n} is active...")
                 try: 
@@ -286,6 +290,9 @@ if __name__ == "__main__":
                 print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
                 response = ps.subscribe_to_nodes_for_plan(n, duration=scrtxxs.HOURS)
                 print(f"[pns]: {response}")
+                print(f"[pns]: Linking {n} to plan {plan_id}...")
+                for pid in plan_id:
+                    ps.add_node_to_plan(pid, n)
         
         print("[pns]: Waiting....")
         sleep(10)
