@@ -31,7 +31,7 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/nodes/%s"
 GRPC = scrtxxs.GRPC_DEV
 SSL = True
-VERSION = 20250713.2053
+VERSION = 20250715.1555
 
 class PlanSubscribe():
     
@@ -147,7 +147,7 @@ class PlanSubscribe():
                 if subscription_id:
                     sleep(4)
                     try:
-                        sub = self.sdk.QuerySubscription(subscription_id=int(subscription_id))
+                        sub = self.sdk.subscriptions.QuerySubscription(subscription_id=int(subscription_id))
                         inactive_at = datetime.fromtimestamp(sub.base.inactive_at.seconds).strftime('%Y-%m-%d %H:%M:%S')
                     except Exception as e:
                         print(str(e))
