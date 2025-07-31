@@ -547,6 +547,68 @@ def get_pirate_balances():
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
+
+@app.route('/v1/firo/newsparkaddress', methods=['GET'])
+@auth.login_required
+def get_new_zaddress():
+    url = "http://firo.mathnodes.com:8888/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id": "meile",
+        "method": "getnewsparkaddress",
+        "params": []
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(response.json())
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': None, 'error': response.status_code, 'id': 'meile'})
+    
+    
+@app.route('/v1/firo/getsparkbalance', methods=['POST'])
+@auth.login_required    
+def get_pirate_balance():
+    try:
+        JSON      = request.json
+        address   = JSON['address']
+    except Exception as e:
+        print(str(e))
+        return False
+    
+    url = "http://firo.mathnodes.com:8888/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id":"meile", 
+        "method": "getsparkaddressbalance", 
+        "params": [address] 
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(f"address: {address}\n response: {response.json()}")
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
+    
+  
     
 def UpdateMeileSubscriberDB():
     pass
