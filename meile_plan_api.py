@@ -262,7 +262,7 @@ def add_wallet_to_plan():
         duration  = int(JSON['data']['duration'])   # duration of plan subscription, in months
         sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
         uuid      = JSON['data']['uuid']            # uuid of subscription
-        amt_paid  = int(JSON['data']['amt'])
+        amt_paid  = float(JSON['data']['amt'])
         denom     = JSON['data']['denom']
     except Exception as e:
         print(str(e))
@@ -330,14 +330,14 @@ def add_wallet_to_plan():
     if renewal and subscription_date is not None:
         query = '''
                 UPDATE meile_subscriptions 
-                SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %d, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s", active = "1"
+                SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %.8f, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s", active = "1"
                 WHERE wallet = "%s" AND subscription_id = %d
                 ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, sub_id) 
                 
     else:
         query = '''
                 INSERT INTO meile_subscriptions (uuid, wallet, subscription_id, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration, expires)
-                VALUES("%s", "%s", %d, %d, %d, "%s", "%s", %d, "%s")
+                VALUES("%s", "%s", %d, %d, %.8f, "%s", "%s", %d, "%s")
                 ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, str(now), duration, str(expires)) 
 
 
@@ -550,8 +550,8 @@ def get_pirate_balances():
 
 @app.route('/v1/firo/newsparkaddress', methods=['GET'])
 @auth.login_required
-def get_new_zaddress():
-    url = "http://firo.mathnodes.com:8888/"
+def get_new_saddress():
+    url = "https://firo.mathnodes.com:8888/"
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -577,7 +577,7 @@ def get_new_zaddress():
     
 @app.route('/v1/firo/getsparkbalance', methods=['POST'])
 @auth.login_required    
-def get_pirate_balance():
+def get_spark_balance():
     try:
         JSON      = request.json
         address   = JSON['address']
@@ -585,7 +585,7 @@ def get_pirate_balance():
         print(str(e))
         return False
     
-    url = "http://firo.mathnodes.com:8888/"
+    url = "https://firo.mathnodes.com:8888/"
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
