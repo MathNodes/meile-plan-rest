@@ -32,7 +32,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20250603.2322
+VERSION=20250810.1654
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -608,7 +608,33 @@ def get_spark_balance():
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
-  
+
+@app.route('/v1/firo/getsparkwalletbalance', methods=['GET'])
+def get_spark_wallet_balance():
+    url = "https://firo.mathnodes.com:8888/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id": "meile",
+        "method": "getsparkbalance",
+        "params": []
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(response.json())
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': None, 'error': response.status_code, 'id': 'meile'})
+    
+   
     
 def UpdateMeileSubscriberDB():
     pass
