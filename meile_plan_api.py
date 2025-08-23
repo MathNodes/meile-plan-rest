@@ -32,7 +32,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20250810.1654
+VERSION=20250822.2358
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -635,6 +635,68 @@ def get_spark_wallet_balance():
         return jsonify({'result': None, 'error': response.status_code, 'id': 'meile'})
     
    
+@app.route('/v1/pivx/newaddress', methods=['GET'])
+@auth.login_required
+def get_new_paddress():
+    url = "https://pivx.mathnodes.com:9999/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id": "meile",
+        "method": "getnewshieldaddress",
+        "params": []
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(response.json())
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': None, 'error': response.status_code, 'id': 'meile'})
+    
+
+@app.route('/v1/pivx/getbalance', methods=['POST'])
+@auth.login_required    
+def get_pivx_balance():
+    try:
+        JSON      = request.json
+        address   = JSON['address']
+        conf      = JSON['conf']
+    except Exception as e:
+        print(str(e))
+        return False
+    
+    url = "https://pivx.mathnodes.com:9999/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id":"meile", 
+        "method": "getshieldbalance", 
+        "params": [address, conf] 
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(f"address: {address}\n response: {response.json()}")
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
+    
+    
     
 def UpdateMeileSubscriberDB():
     pass
