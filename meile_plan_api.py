@@ -32,7 +32,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20250822.2358
+VERSION=20250911.1514
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -186,6 +186,8 @@ def CheckRenewalStatus(subid, wallet):
     
 def AllocateTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
     # Add logging    
+    WalletLogFile = os.path.join(WalletLogDIR, "meile_allocate.log") 
+    log_file_descriptor = open(WalletLogFile, "a+")
     
     tx_params = TxParams(
                 gas=150000,
@@ -197,11 +199,17 @@ def AllocateTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
     tx = sdk.subscriptions.Allocate(address=wallet, bytes=str(size), id=sub_id, tx_params=tx_params)
     
     if tx.get("log", None) is not None:
+        log_file_descriptor.write(f"\nERROR:\n{tx.get('log')}")
+        log_file_descriptor.flush()
+        log_file_descriptor.close()
         message = "Error adding wallet to plan. Please contact support@mathnodes.com for assistance."        
         return {"status" : False, "message" : message, "hash" : "0x0", "tx_response" : None}
     
     if tx.get("hash", None) is not None:
         tx_response = sdk.nodes.wait_transaction(tx["hash"])
+        log_file_descriptor.write(f"\nSuccess:\n {tx_response}")
+        log_file_descriptor.flush()
+        log_file_descriptor.close()
         return {"status" : True, "message" : "Success.", "hash" : tx['hash'], "tx_response" : tx_response}
     
     
@@ -696,6 +704,109 @@ def get_pivx_balance():
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
+@app.route('/v1/pivx/getbalances', methods=['GET'])    
+def get_pivx_balances():
+    
+    url = "https://pivx.mathnodes.com:9999/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id":"meile", 
+        "method": "listshieldunspent", 
+        "params": [] 
+    }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(f"response: {response.json()}")
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
+    
+
+@app.route('/v1/zano/gettxs', methods=['POST'])
+@auth.login_required    
+def get_zano_txs():
+    SATOSHI = 1000000000000
+    SATOSHI_FUSD = 10000
+    accumulated = 0
+    FOUND = False
+    ASSET_IDS = {'zano' : 'd6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a',
+                 'fusd' : '86143388bd056a8f0bab669f78f14873fac8e2dd8d57898cdb725a2d5e2e4f8f'}
+    
+    try:
+        JSON      = request.json
+        address   = JSON['address']
+        coin      = JSON['coin']
+    except Exception as e:
+        print(str(e))
+        return False
+    
+    asset_id = ASSET_IDS[coin]
+    
+    url = "https://zano.mathnodes.com/json_rpc"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+          "id": 0,
+          "jsonrpc": "2.0",
+          "method": "get_recent_txs_and_info",
+          "params": {
+            "count": 10,
+            "exclude_mining_txs": False,
+            "exclu    de_unconfirmed": False,
+            "offset": 0,
+            "order": "FROM_END_TO_BEGIN",
+            "update_provision_info": True
+          }
+        }
+    
+
+    try:
+        response = requests.post(
+            url,
+            json=data,
+            headers=headers,
+        )
+    except Exception as e:
+        print(str(e))
+        return jsonify({'result' : 0.0,
+                        'height' : None,
+                        'error' : None})
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        result = response.json()
+        height = result['result']['pi']['curent_height']
+        print(f"Height: {height}")
+        print(f"address: {address}\n response: {response.json()}")
+        for tx in result['result']['transfers']:
+            if tx['comment'] == address and tx['employed_entries']['receive'][0]['asset_id'] == asset_id and (tx['height'] == 0 or tx['height'] > height - 10):
+                FOUND = True
+                txheight = tx['height']
+                if asset_id == ASSET_IDS['fusd']:
+                    accumulated += float(tx['employed_entries']['receive'][0]['amount']) / SATOSHI_FUSD
+                else:
+                    accumulated += float(tx['employed_entries']['receive'][0]['amount']) / SATOSHI
+                
+        if FOUND:
+            return jsonify({'result' : round(float(accumulated),4),
+                            'height' : txheight,
+                            'error' : None})
+        else:
+            return jsonify({'result' : 0.0,
+                            'height' : None,
+                            'error' : None})
+    else:
+        return jsonify({'result': 0.0, 
+                        'error': response.status_code,  
+                        'height' : None})
     
     
 def UpdateMeileSubscriberDB():
