@@ -807,6 +807,30 @@ def get_zano_txs():
         return jsonify({'result': 0.0, 
                         'error': response.status_code,  
                         'height' : None})
+        
+@app.route('/v1/zano/getbalances', methods=['GET'])    
+def get_zano_balances():
+    url = "https://zano.mathnodes.com/json_rpc"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+              "id": 0,
+              "jsonrpc": "2.0",
+              "method": "getbalance",
+              "params": {
+              }                                                                               
+            }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers)
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(f"response: {response.json()}")
+        return jsonify(response.json())
+    else:
+        return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
     
 def UpdateMeileSubscriberDB():
