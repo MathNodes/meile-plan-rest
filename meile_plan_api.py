@@ -751,7 +751,7 @@ def get_zano_txs():
     
     asset_id = ASSET_IDS[coin]
     
-    url = "https://zano.mathnodes.com/json_rpc"
+    url = "https://zano.mindcontrollers.xyz:7778/json_rpc"
     headers = {'content-type': 'text/plain;'}
     data = {
           "id": 0,
@@ -810,7 +810,7 @@ def get_zano_txs():
         
 @app.route('/v1/zano/getbalances', methods=['GET'])    
 def get_zano_balances():
-    url = "https://zano.mathnodes.com/json_rpc"
+    url = "https://zano.mindcontrollers.xyz:7778/json_rpc"
     headers = {'content-type': 'text/plain;'}
     data = {
               "id": 0,
