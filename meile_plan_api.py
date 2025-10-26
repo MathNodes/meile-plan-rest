@@ -19,7 +19,7 @@ from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from sentinel_sdk.sdk import SDKInstance
-from sentinel_sdk.types import TxParams
+from sentinel_sdk.types import TxParams, RenewalPricePolicy
 from sentinel_sdk.utils import search_attribute
 from sentinel_protobuf.cosmos.base.v1beta1.coin_pb2 import Coin
 from mospy import Transaction
@@ -32,7 +32,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20250911.1514
+VERSION=20251025.2127
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -184,7 +184,7 @@ def CheckRenewalStatus(subid, wallet):
     else: 
         return False, None, None
     
-def AllocateTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
+def SubToPlan(plan_id: int, wallet: str):
     # Add logging    
     WalletLogFile = os.path.join(WalletLogDIR, "meile_allocate.log") 
     log_file_descriptor = open(WalletLogFile, "a+")
@@ -196,7 +196,50 @@ def AllocateTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
                 denom="udvpn"
                 )
     
-    tx = sdk.subscriptions.Allocate(address=wallet, bytes=str(size), id=sub_id, tx_params=tx_params)
+    
+    tx = sdk.subscriptions.StartSubscription(plan_id=plan_id, denom="udvpn", renewal = RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL, tx_params=tx_params)
+    
+    if tx.get("log", None) is not None:
+        log_file_descriptor.write(f"\nERROR:\n{tx.get('log')}")
+        log_file_descriptor.flush()
+        log_file_descriptor.close()
+        message = "Error subscribing to plan. Please contact support@mathnodes.com for assistance."        
+        return {"status" : False, 
+                "message" : message, 
+                "hash" : "0x0", 
+                "tx_response" : None,
+                "sub_id" : None}
+    
+    if tx.get("hash", None) is not None:
+        tx_response = sdk.nodes.wait_transaction(tx["hash"])
+        log_file_descriptor.write(f"\nSuccess:\n {tx_response}")
+        subscription_id = search_attribute(
+                tx_response, "sentinel.subscription.v3.EventCreate", "subscription_id"
+            )
+        log_file_descriptor.flush()
+        log_file_descriptor.close()
+        return {"status" : True, 
+                "message" : "Success.",
+                "hash" : tx['hash'], 
+                "tx_response" : tx_response,
+                'sub_id' : subscription_id}
+    
+def ShareSubTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
+    # Add logging    
+    WalletLogFile = os.path.join(WalletLogDIR, "meile_allocate.log") 
+    log_file_descriptor = open(WalletLogFile, "a+")
+    
+    tx_params = TxParams(
+                gas=150000,
+                gas_multiplier=1.2,
+                fee_amount=31415,
+                denom="udvpn"
+                )
+    
+    tx = sdk.subscriptions.ShareSubscription(subscription_id=sub_id,
+                                             wallet_address=wallet, 
+                                             bytes=str(size), 
+                                             tx_params=tx_params)
     
     if tx.get("log", None) is not None:
         log_file_descriptor.write(f"\nERROR:\n{tx.get('log')}")
@@ -268,7 +311,7 @@ def add_wallet_to_plan():
         wallet    = JSON['data']['wallet']
         plan_id   = int(JSON['data']['plan_id'])     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
         duration  = int(JSON['data']['duration'])   # duration of plan subscription, in months
-        sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
+        #sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
         uuid      = JSON['data']['uuid']            # uuid of subscription
         amt_paid  = float(JSON['data']['amt'])
         denom     = JSON['data']['denom']
@@ -307,13 +350,29 @@ def add_wallet_to_plan():
     WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log") 
     log_file_descriptor = open(WalletLogFile, "a+")
     
-    result = AllocateTX(sdk, sub_id, wallet)
+    sub_result = SubToPlan(plan_id, wallet)
+    if not sub_result['status']:
+        PlanTX = {'status' : result["status"],
+                  'wallet' : wallet, 
+                  'planid' : plan_id, 
+                  'duration' : duration, 
+                  'tx' : result["hash"], 
+                  'message' : result["message"],
+                  'expires' : None}
+        print(PlanTX)
+        log_file_descriptor.write(json.dumps(PlanTX) + '\n')
+        return jsonify(PlanTX)
+    
+    else:
+        sub_id = sub_result['sub_id']
+    
+    result = ShareSubTX(sdk, sub_id, wallet)
     
     if not result['status']:
         PlanTX = {'status' : result["status"],
                   'wallet' : wallet, 
                   'planid' : plan_id, 
-                  'id' : sub_id, 
+                  'id' : sub_result['sub_id'], 
                   'duration' : duration, 
                   'tx' : result["hash"], 
                   'message' : result["message"],
