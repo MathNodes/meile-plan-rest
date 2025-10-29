@@ -372,7 +372,7 @@ def add_wallet_to_plan():
         PlanTX = {'status' : result["status"],
                   'wallet' : wallet, 
                   'planid' : plan_id, 
-                  'id' : sub_result['sub_id'], 
+                  'id' : sub_id, 
                   'duration' : duration, 
                   'tx' : result["hash"], 
                   'message' : result["message"],

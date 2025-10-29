@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins
 
 from sentinel_sdk.sdk import SDKInstance
-from sentinel_sdk.types import TxParams
+from sentinel_sdk.types import TxParams, Price, RenewalPricePolicy
 from sentinel_sdk.utils import search_attribute
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
 import ecdsa
@@ -28,7 +28,7 @@ import grpc
 
 
 MNAPI = "https://api.sentinel.mathnodes.com"
-NODEAPI = "/sentinel/nodes/%s"
+NODEAPI = "/sentinel/node/v3/nodes/%s"
 GRPC = scrtxxs.GRPC_DEV
 SSL = True
 VERSION = 20250715.1555
@@ -127,23 +127,32 @@ class PlanSubscribe():
         )
         
         try: 
-            tx = self.sdk.nodes.SubscribeToNode(
+            price = Price(
+                denom="udvpn"
+                )
+            tx = self.sdk.lease.StartLease(
                 node_address=nodeaddress,
-                gigabytes=int(GB),  # TODO: review this please
-                hours=int(duration),  # TODO: review this please
-                denom="udvpn",
-                tx_params=tx_params,
+                hours=scrtxxs.HOURS,
+                max_price=price,
+                renewal=RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUALRENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL
             )
             
             if tx.get("log", None) is not None:
                 return(False, tx["log"])
-    
+            
             if tx.get("hash", None) is not None:
                 tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
                 print(tx_response)
-                subscription_id = search_attribute(
-                    tx_response, "sentinel.node.v2.EventCreateSubscription", "id"
+                lease_id = search_attribute(
+                    tx_response, "sentinel.lease.v3.EventCreate", "lease_id"
                 )
+                now = datetime.now()
+                inactive_at = now + timedelta(hours=scrtxxs.HOURS)
+                self.UpdateNodePlanDB(nodeaddress, lease_id, inactive_at)
+                    
+                return (True, lease_id)
+                
+            '''
                 if subscription_id:
                     sleep(4)
                     try:
@@ -154,22 +163,19 @@ class PlanSubscribe():
                         now = datetime.now()
                         inactive_at = now + timedelta(hours=scrtxxs.HOURS)
                         inactive_at = inactive_at.strftime('%Y-%m-%d %H:%M:%S')
-                        
-                    self.UpdateNodePlanDB(nodeaddress, inactive_at)
-                        
-                    return (True, subscription_id)
+            '''
     
             return(False, "Tx error")
         except grpc.RpcError as e:
             print(e.details())
             
             
-    def UpdateNodePlanDB(self, nodeaddress, inactive_at):
+    def UpdateNodePlanDB(self, nodeaddress, lease_id, inactive_at):
         c = self._db.cursor()
         
         q = '''
-            UPDATE plan_node_subscriptions SET inactive_date = '%s' WHERE node_address = '%s';
-            ''' % (inactive_at, nodeaddress)
+            UPDATE plan_node_subscriptions SET inactive_date = '%s', node_subscription_id = '%s' WHERE node_address = '%s';
+            ''' % (inactive_at, lease_id, nodeaddress)
                 
         print(f"[pns]: {q}")
         c.execute(q)
@@ -201,6 +207,7 @@ class PlanSubscribe():
 
         return (False,"Tx error")
 
+'''
 def run_update(uuid):
     update_cmd = f"{scrtxxs.HELPERS}/update-node-scriptions.py --uuid  {uuid}"
     
@@ -208,7 +215,7 @@ def run_update(uuid):
     proc1.wait(timeout=30)
 
     proc_out,proc_err = proc1.communicate()
-
+'''
 def run_insert(node_file, uuid):
     update_cmd = f"{scrtxxs.HELPERS}/insert-nodes.py --uuid  {uuid} --file {node_file}"
     
@@ -293,7 +300,7 @@ if __name__ == "__main__":
                 print(f"[pns]: Linking {n} to plan {plan_id}...")
                 for pid in plan_id:
                     ps.add_node_to_plan(pid, n)
-        
+        '''
         print("[pns]: Waiting....")
         sleep(10)
         # Run db updater script with UUIDs
@@ -304,4 +311,4 @@ if __name__ == "__main__":
             run_update(uuid)
             sleep(2)
             print("[pns]: Done.")
-            
+        '''
