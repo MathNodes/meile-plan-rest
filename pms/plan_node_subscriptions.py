@@ -31,7 +31,7 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/node/v3/nodes/%s"
 GRPC = scrtxxs.GRPC_DEV
 SSL = True
-VERSION = 20250715.1555
+VERSION = 20251029.1707
 
 class PlanSubscribe():
     
@@ -134,7 +134,7 @@ class PlanSubscribe():
                 node_address=nodeaddress,
                 hours=scrtxxs.HOURS,
                 max_price=price,
-                renewal=RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUALRENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL
+                renewal=RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL
             )
             
             if tx.get("log", None) is not None:
