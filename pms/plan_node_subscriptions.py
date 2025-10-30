@@ -12,8 +12,10 @@ from urllib.parse import urlparse
 from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins
 
 from sentinel_sdk.sdk import SDKInstance
-from sentinel_sdk.types import TxParams, Price, RenewalPricePolicy
+from sentinel_sdk.types import TxParams
 from sentinel_sdk.utils import search_attribute
+from sentinel_protobuf.sentinel.types.v1.price_pb2 import Price
+from sentinel_protobuf.sentinel.types.v1.renewal_pb2 import RenewalPricePolicy
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
 import ecdsa
 import hashlib
@@ -127,11 +129,14 @@ class PlanSubscribe():
         )
         
         try: 
+            # temporary
             price = Price(
-                denom="udvpn"
+                denom="udvpn",
+                base_value="0",
+                quote_value="0"
                 )
             tx = self.sdk.lease.StartLease(
-                node_address=nodeaddress,
+                node=nodeaddress,
                 hours=scrtxxs.HOURS,
                 max_price=price,
                 renewal=RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL
@@ -144,7 +149,7 @@ class PlanSubscribe():
                 tx_response = self.sdk.nodes.wait_transaction(tx["hash"])
                 print(tx_response)
                 lease_id = search_attribute(
-                    tx_response, "sentinel.lease.v3.EventCreate", "lease_id"
+                    tx_response, "sentinel.lease.v1.EventCreate", "lease_id"
                 )
                 now = datetime.now()
                 inactive_at = now + timedelta(hours=scrtxxs.HOURS)
@@ -217,6 +222,7 @@ def run_update(uuid):
     proc_out,proc_err = proc1.communicate()
 '''
 def run_insert(node_file, uuid):
+    
     update_cmd = f"{scrtxxs.HELPERS}/insert-nodes.py --uuid  {uuid} --file {node_file}"
     
     proc1 = Popen(update_cmd, shell=True)
@@ -297,9 +303,13 @@ if __name__ == "__main__":
                 print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
                 response = ps.subscribe_to_nodes_for_plan(n, duration=scrtxxs.HOURS)
                 print(f"[pns]: {response}")
+                plan_id = list(set(plan_id))
                 print(f"[pns]: Linking {n} to plan {plan_id}...")
                 for pid in plan_id:
-                    ps.add_node_to_plan(pid, n)
+                    try:
+                        ps.add_node_to_plan(pid, n)
+                    except Exception as e:
+                        print(str(e))
         '''
         print("[pns]: Waiting....")
         sleep(10)
