@@ -4,6 +4,10 @@ Meile Subscription Plan REST API
 
 ## Dependencies
 
+```shell
+sudo apt install pkg-config cmkae libcairo2-dev libicu-dev libgirepository1.0-dev libdbus-1-dev
+```
+
 * uWSGI, `sudo apt install uwsgi-plugin-python3`
 * Flask, 
 * FlaskMySQL, 
@@ -15,11 +19,10 @@ Meile Subscription Plan REST API
 
 `pip install -r requirements.txt`
 
+
 # API Documentation
 
 [Swagger OpenAPI](https://petstore.swagger.io/?url=https://raw.githubusercontent.com/MathNodes/meile-plan-rest/main/doc/meile-api.yaml)
-
-
 
 # Database Schema
 
@@ -55,8 +58,6 @@ Then run the following command to start the API server;
 ```
 
 Filling in the ip address you wish to run the server on. This will spawn the server on port 5000. It will also spawn a stats server on port 9191. 
-
-
 
 # Helpers
 
