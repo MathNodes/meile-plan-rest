@@ -19,9 +19,10 @@ from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from sentinel_sdk.sdk import SDKInstance
-from sentinel_sdk.types import TxParams, RenewalPricePolicy
+from sentinel_sdk.types import TxParams
 from sentinel_sdk.utils import search_attribute
 from sentinel_protobuf.cosmos.base.v1beta1.coin_pb2 import Coin
+from sentinel_protobuf.sentinel.types.v1.renewal_pb2 import RenewalPricePolicy
 from mospy import Transaction
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
 from grpc import RpcError
@@ -197,7 +198,10 @@ def SubToPlan(plan_id: int, wallet: str):
                 )
     
     
-    tx = sdk.subscriptions.StartSubscription(plan_id=plan_id, denom="udvpn", renewal = RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL, tx_params=tx_params)
+    tx = sdk.subscriptions.StartSubscription(plan_id=plan_id,
+                                            denom="udvpn", 
+                                            renewal = RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL, 
+                                            tx_params=tx_params)
     
     if tx.get("log", None) is not None:
         log_file_descriptor.write(f"\nERROR:\n{tx.get('log')}")
