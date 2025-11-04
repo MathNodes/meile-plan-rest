@@ -27,13 +27,15 @@ from subprocess import Popen
 from time import sleep
 import requests
 import grpc
+import subprocess
+import json
 
 
 MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/node/v3/nodes/%s"
 GRPC = scrtxxs.GRPC_DEV
 SSL = True
-VERSION = 20251029.1707
+VERSION = 20251104.0130
 
 class PlanSubscribe():
     
@@ -118,7 +120,7 @@ class PlanSubscribe():
         return test
 
     
-    def subscribe_to_nodes_for_plan(self, nodeaddress, duration=0, GB=0):
+    def subscribe_to_nodes_for_plan(self, nodeaddress, base_value: str, quote_value: str, duration=0, GB=0):
         error_message = "NotNone"
         
         tx_params = TxParams(
@@ -132,8 +134,8 @@ class PlanSubscribe():
             # temporary
             price = Price(
                 denom="udvpn",
-                base_value="0",
-                quote_value="0"
+                base_value=base_value,
+                quote_value=quote_value
                 )
             tx = self.sdk.lease.StartLease(
                 node=nodeaddress,
@@ -141,6 +143,8 @@ class PlanSubscribe():
                 max_price=price,
                 renewal=RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL
             )
+            
+            print(tx_params)
             
             if tx.get("log", None) is not None:
                 return(False, tx["log"])
@@ -299,9 +303,46 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(str(e))
                     pass
+                
+                # need to replace by SDK call, when SDK is completed
+                cmd = [
+                    "/home/sentinel/go/bin/sentinelhub",
+                    "q", "vpn", "node", n,
+                    "--node", "https://rpc.mathnodes.com:443",
+                    "--output", "json"
+                ]
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    data = json.loads(result.stdout)
+                except subprocess.CalledProcessError as e:
+                    print("Error running command:", e.stderr)
+                except json.JSONDecodeError as e:
+                    print("Error parsing JSON:", e)
                     
+                hourly_prices = data.get("node", {}).get("hourly_prices", [])
+
+                base_value = None
+                quote_value = None
+                
+                for price in hourly_prices:
+                    if price.get("denom") == "udvpn":
+                        base_value = price.get("base_value")
+                        quote_value = price.get("quote_value")
+                        break
+                
+                if not base_value:
+                    base_value = "0"
+                    
+                if not quote_value:
+                    quote_value = "0"
+                    
+                base_value = int(float(base_value) * 10**18)
+                    
+                print(f"base_value = {base_value}")
+                print(f"quote_value = {quote_value}")
+                                    
                 print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
-                response = ps.subscribe_to_nodes_for_plan(n, duration=scrtxxs.HOURS)
+                response = ps.subscribe_to_nodes_for_plan(n, base_value=str(base_value), quote_value=str(quote_value), duration=scrtxxs.HOURS)
                 print(f"[pns]: {response}")
                 plan_id = list(set(plan_id))
                 print(f"[pns]: Linking {n} to plan {plan_id}...")
@@ -310,6 +351,7 @@ if __name__ == "__main__":
                         ps.add_node_to_plan(pid, n)
                     except Exception as e:
                         print(str(e))
+                sleep(2)
         '''
         print("[pns]: Waiting....")
         sleep(10)

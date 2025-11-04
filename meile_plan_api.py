@@ -33,7 +33,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20251025.2127
+VERSION=20251101.1200
 
 app = Flask(__name__)
 mysql = MySQL()
