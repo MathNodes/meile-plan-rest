@@ -35,7 +35,7 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/node/v3/nodes/%s"
 GRPC = scrtxxs.GRPC_DEV
 SSL = True
-VERSION = 20251104.0130
+VERSION = 20251126.1720
 
 class PlanSubscribe():
     
@@ -215,6 +215,27 @@ class PlanSubscribe():
             return (True, None)
 
         return (False,"Tx error")
+    
+    def get_price_of_node(self, node):
+        result = self.sdk.nodes.QueryNode(address=node)
+        
+        k = 0
+        for gb_price in result.gigabyte_prices:
+            if "udvpn" == gb_price.denom:
+                break
+            else:
+                k += 1
+        
+        if k > len(result.gigabyte_prices) - 1:
+            print(f"No proper denomination found!")
+            return {"success" : False, "base_value" : None, "quote_value" : None}
+        
+        
+        base_value = result.hourly_prices[k].base_value
+        quote_value = result.hourly_prices[k].quote_value
+        
+        return {"success" : True, "base_value" : base_value, "quote_value" : quote_value}
+        
 
 '''
 def run_update(uuid):
@@ -258,8 +279,18 @@ if __name__ == "__main__":
             nodes = nodefile.readlines()
             
         for n in nodes:
+            prices = ps.get_price_of_node(node=n)
+            
+            if not prices['success']:
+                continue
+                
+            base_value = int(float(prices['base_value']) * 10**18)
+            quote_value = int(prices['quote_value'])
+                
+            print(f"base_value = {base_value}")
+            print(f"quote_value = {quote_value}")
             print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {args.uuid}...")
-            response = ps.subscribe_to_nodes_for_plan(n, duration=scrtxxs.HOURS)
+            response = ps.subscribe_to_nodes_for_plan(n, base_value=str(base_value), quote_value=str(quote_value), duration=scrtxxs.HOURS)
             print(response)
             print("[pns]: Waiting 5s...")
             sleep(5)
@@ -305,6 +336,7 @@ if __name__ == "__main__":
                     pass
                 
                 # need to replace by SDK call, when SDK is completed
+                '''
                 cmd = [
                     "/home/sentinel/go/bin/sentinelhub",
                     "q", "vpn", "node", n,
@@ -337,6 +369,17 @@ if __name__ == "__main__":
                     quote_value = "0"
                     
                 base_value = int(float(base_value) * 10**18)
+                    
+                print(f"base_value = {base_value}")
+                print(f"quote_value = {quote_value}")
+                '''
+                prices = ps.get_price_of_node(node=n)
+            
+                if not prices['success']:
+                    continue
+                    
+                base_value = int(float(prices['base_value']) * 10**18)
+                quote_value = int(prices['quote_value'])
                     
                 print(f"base_value = {base_value}")
                 print(f"quote_value = {quote_value}")
