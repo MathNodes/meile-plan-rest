@@ -33,7 +33,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20251105.1639
+VERSION=20251211.1544
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -424,7 +424,19 @@ def add_wallet_to_plan():
         print(str(e))
         log_file_descriptor.write("ERROR ADDING WALLET TO SUBSCRIPTION DATABASE" + '\n')
         
-        
+    query = '''
+            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration)
+            VALUES(%s", %d, %.8f, "%s", "%s", %d)
+            ''' % (wallet, plan_id, amt_paid, denom, str(now), duration)     
+            
+    print("Updating Itemized Subscription Table...")
+    print(query)
+    
+    try:
+        UpdateDBTable(query)    
+    except Exception as e:
+        print(str(e))
+        log_file_descriptor.write("ERROR ADDING WALLET TO ITEMIZED SUBSCRIPTION DATABASE" + '\n')
         
     result = FeeGrant(wallet)
     
