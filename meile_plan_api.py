@@ -33,7 +33,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20251211.1544
+VERSION=20251212.1411
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -169,19 +169,17 @@ def GetPlanCostDenom(uuid):
     
     return plan411[0], plan411[1]
 
-def CheckRenewalStatus(wallet, sub_id):
+def CheckRenewalStatus(wallet, plan_id):
     
-    if sub_id != 0:
-        query = f"SELECT subscription_id, subscribe_date, expires FROM meile_subscriptions WHERE wallet = '{wallet}' AND subscription_id = {sub_id};"
-        c = GetDBCursor()
-        c.execute(query)
-        
-        results = c.fetchone()
-    else:
-        results = None
-        
-    if results is not None:
-        if results[0] and results[1]:
+    
+    query = f"SELECT subscription_id, subscribe_date, expires FROM meile_subscriptions WHERE wallet = '{wallet}' AND plan_id = {plan_id};"
+    c = GetDBCursor()
+    c.execute(query)
+    
+    results = c.fetchone()
+    
+    if results:
+        if results[1] and results[2]:
             return True,results[1],results[2]
         else: 
             return False, None, None          
@@ -318,7 +316,10 @@ def add_wallet_to_plan():
         wallet        = JSON['data']['wallet']
         plan_id       = int(JSON['data']['plan_id'])     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
         duration      = int(JSON['data']['duration'])   # duration of plan subscription, in months
-        old_sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
+        try: 
+            old_sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
+        except:
+            old_sub_id = 0
         uuid          = JSON['data']['uuid']            # uuid of subscription
         amt_paid      = float(JSON['data']['amt'])
         denom         = JSON['data']['denom']
@@ -342,8 +343,9 @@ def add_wallet_to_plan():
         print(PlanTX)
         return jsonify(PlanTX)
     
-    renewal,subscription_date, expiration = CheckRenewalStatus(wallet, old_sub_id)
+    renewal,subscription_date, expiration = CheckRenewalStatus(wallet, plan_id)
     
+    print(f"renewal: {renewal}, sub date: {subscription_date}")
     now = datetime.now()
     if expiration:
         if now < expiration:
@@ -405,8 +407,8 @@ def add_wallet_to_plan():
         query = '''
                 UPDATE meile_subscriptions 
                 SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %.8f, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s", active = "1"
-                WHERE wallet = "%s" AND subscription_id = %d AND plan_id = %d
-                ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, old_sub_id, plan_id) 
+                WHERE wallet = "%s" AND plan_id = %d
+                ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, plan_id) 
                 
     else:
         query = '''
@@ -426,7 +428,7 @@ def add_wallet_to_plan():
         
     query = '''
             INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration)
-            VALUES(%s", %d, %.8f, "%s", "%s", %d)
+            VALUES("%s", %d, %.8f, "%s", "%s", %d)
             ''' % (wallet, plan_id, amt_paid, denom, str(now), duration)     
             
     print("Updating Itemized Subscription Table...")

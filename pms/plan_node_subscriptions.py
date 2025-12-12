@@ -35,7 +35,7 @@ MNAPI = "https://api.sentinel.mathnodes.com"
 NODEAPI = "/sentinel/node/v3/nodes/%s"
 GRPC = scrtxxs.GRPC_DEV
 SSL = True
-VERSION = 20251126.1720
+VERSION = 20251211.2234
 
 class PlanSubscribe():
     
@@ -120,7 +120,14 @@ class PlanSubscribe():
         return test
 
     
-    def subscribe_to_nodes_for_plan(self, nodeaddress, base_value: str, quote_value: str, duration=0, GB=0):
+    def subscribe_to_nodes_for_plan(self, 
+                                    nodeaddress, 
+                                    base_value: str, 
+                                    quote_value: str, 
+                                    duration=0, 
+                                    GB=0, 
+                                    uuids: list() = [], 
+                                    plans: list() = []):
         error_message = "NotNone"
         
         tx_params = TxParams(
@@ -138,7 +145,7 @@ class PlanSubscribe():
                 quote_value=quote_value
                 )
             tx = self.sdk.lease.StartLease(
-                node=nodeaddress,
+                node=nodeaddress.rstrip(),
                 hours=scrtxxs.HOURS,
                 max_price=price,
                 renewal=RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL
@@ -157,7 +164,17 @@ class PlanSubscribe():
                 )
                 now = datetime.now()
                 inactive_at = now + timedelta(hours=scrtxxs.HOURS)
-                self.UpdateNodePlanDB(nodeaddress, lease_id, inactive_at)
+                if self.QueryDBSubscriptions(nodeaddress):
+                    self.UpdateNodePlanDB(nodeaddress.rstrip(), lease_id, inactive_at)
+                    
+                else:
+                    self.InsertNodeInDB(uuids, 
+                                        plans, 
+                                        str(scrtxxs.HOURS*int(quote_value)) + "udvpn", 
+                                        scrtxxs.HOURS,
+                                        lease_id,
+                                        inactive_at,
+                                        nodeaddress.rstrip())
                     
                 return (True, lease_id)
                 
@@ -178,7 +195,34 @@ class PlanSubscribe():
         except grpc.RpcError as e:
             print(e.details())
             
+    def InsertNodeInDB(self,uuids,plans,deposit, hours, lease_id, inactive_at, nodeaddress):
+        c = self._db.cursor()
+        for uuid, plan in zip(uuids,plans):
+            q = '''
+                INSERT IGNORE INTO plan_nodes (uuid, node_address)
+                VALUES ("%s", "%s");
+                ''' % (uuid, nodeaddress)
+                
+            print(q)
+            c.execute(q)
+            self._db.commit()
             
+            q = '''
+                INSERT IGNORE INTO plan_node_subscriptions (node_address,uuid,plan_id,plan_subscription_id,node_subscription_id,deposit,hours,inactive_date)
+                VALUES ("%s", "%s", %d, %d, %d, "%s", %d, "%s")
+                ''' % (nodeaddress, uuid,int(plan),0, int(lease_id), deposit, hours, str(inactive_at))
+            print(q)
+            c.execute(q)
+            self._db.commit()
+                
+    def QueryDBSubscriptions(self, nodeaddress): 
+        c = self._db.cursor()
+        query = "SELECT * from plan_node_subscriptions WHERE node_address = '%s';" % (nodeaddress)
+        c.execute(query)
+        result = c.fetchall()
+        return bool(result)
+        
+               
     def UpdateNodePlanDB(self, nodeaddress, lease_id, inactive_at):
         c = self._db.cursor()
         
@@ -193,9 +237,6 @@ class PlanSubscribe():
 
     def add_node_to_plan(self, plan_id, node):
         tx_params = TxParams(
-            # denom="udvpn",  # TODO: from ConfParams
-            # fee_amount=20000,  # TODO: from ConfParams
-            # gas=ConfParams.GAS,
             gas_multiplier=1.15
         )
         
@@ -245,7 +286,7 @@ def run_update(uuid):
     proc1.wait(timeout=30)
 
     proc_out,proc_err = proc1.communicate()
-'''
+
 def run_insert(node_file, uuid):
     
     update_cmd = f"{scrtxxs.HELPERS}/insert-nodes.py --uuid  {uuid} --file {node_file}"
@@ -254,7 +295,9 @@ def run_insert(node_file, uuid):
     proc1.wait(timeout=30)
 
     proc_out,proc_err = proc1.communicate()
-
+'''
+    
+     
 if __name__ == "__main__":
     
     
@@ -290,26 +333,23 @@ if __name__ == "__main__":
             print(f"base_value = {base_value}")
             print(f"quote_value = {quote_value}")
             print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {args.uuid}...")
-            response = ps.subscribe_to_nodes_for_plan(n, base_value=str(base_value), quote_value=str(quote_value), duration=scrtxxs.HOURS)
+            response = ps.subscribe_to_nodes_for_plan(n, 
+                                                      base_value=str(base_value), 
+                                                      quote_value=str(quote_value), 
+                                                      duration=scrtxxs.HOURS, 
+                                                      uuids=args.uuid.split(','), 
+                                                      plans=plan_id)
             print(response)
             print("[pns]: Waiting 5s...")
             sleep(5)
             print(f"[pns]: Adding {n} to plan {plan_id},{args.uuid}...")
             for pid in plan_id:
-                ps.add_node_to_plan(pid, n)
-            
-            
-        for uuid in args.uuid.split(','):
-            print("[pns]: Inserting nodes in plan DB...", end='')    
-            run_insert(args.file, uuid)
-            sleep(2)
-            print("[pns]: Done.")
-            print("[pns]: Wainting...")
-            sleep(20)
-            print("[pns]: Updating plan_node_subscriptions...")
-            run_update(uuid)
-            print("[pns]: Done.")    
-            
+                try: 
+                    ps.add_node_to_plan(pid, n)
+                except Exception as e:
+                    print(str(e))
+                    
+  
     else:
         plan_id = []
         print("[pns]: Computing Resubscriptions...")
@@ -335,44 +375,6 @@ if __name__ == "__main__":
                     print(str(e))
                     pass
                 
-                # need to replace by SDK call, when SDK is completed
-                '''
-                cmd = [
-                    "/home/sentinel/go/bin/sentinelhub",
-                    "q", "vpn", "node", n,
-                    "--node", "https://rpc.mathnodes.com:443",
-                    "--output", "json"
-                ]
-                try:
-                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                    data = json.loads(result.stdout)
-                except subprocess.CalledProcessError as e:
-                    print("Error running command:", e.stderr)
-                except json.JSONDecodeError as e:
-                    print("Error parsing JSON:", e)
-                    
-                hourly_prices = data.get("node", {}).get("hourly_prices", [])
-
-                base_value = None
-                quote_value = None
-                
-                for price in hourly_prices:
-                    if price.get("denom") == "udvpn":
-                        base_value = price.get("base_value")
-                        quote_value = price.get("quote_value")
-                        break
-                
-                if not base_value:
-                    base_value = "0"
-                    
-                if not quote_value:
-                    quote_value = "0"
-                    
-                base_value = int(float(base_value) * 10**18)
-                    
-                print(f"base_value = {base_value}")
-                print(f"quote_value = {quote_value}")
-                '''
                 prices = ps.get_price_of_node(node=n)
             
                 if not prices['success']:
@@ -385,7 +387,12 @@ if __name__ == "__main__":
                 print(f"quote_value = {quote_value}")
                                     
                 print(f"[pns]: Subscribing to {n} for {scrtxxs.HOURS} hour(s) on plan {plan}...")
-                response = ps.subscribe_to_nodes_for_plan(n, base_value=str(base_value), quote_value=str(quote_value), duration=scrtxxs.HOURS)
+                response = ps.subscribe_to_nodes_for_plan(n,
+                                                          base_value=str(base_value), 
+                                                          quote_value=str(quote_value), 
+                                                          duration=scrtxxs.HOURS, 
+                                                          uuids=uuids.split(',')[1:], 
+                                                          plans=plan_id)
                 print(f"[pns]: {response}")
                 plan_id = list(set(plan_id))
                 print(f"[pns]: Linking {n} to plan {plan_id}...")
@@ -395,15 +402,4 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(str(e))
                 sleep(2)
-        '''
-        print("[pns]: Waiting....")
-        sleep(10)
-        # Run db updater script with UUIDs
-        uuids = uuids.split(',')[1:]
-        print(f"[pns]: uuids: {uuids}")
-        for uuid in uuids:
-            print(f"[pns]: Updating node subs for plan {uuid}...", end='')
-            run_update(uuid)
-            sleep(2)
-            print("[pns]: Done.")
-        '''
+       
