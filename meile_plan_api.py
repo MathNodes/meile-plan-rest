@@ -697,6 +697,80 @@ def get_spark_balance():
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
+@app.route('/v1/firo/getsparktxs', methods=['POST'])
+@auth.login_required    
+def get_spark_txs():
+    try:
+        JSON = request.json
+        amount = JSON['amount']
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            "success": False,
+            "chainlock": False,
+            "instantlock": False,
+            "error": "Invalid request body"
+        }), 400
+
+    url = "https://firo-rpc.host.com:8888/"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id": "meile", 
+        "method": "listtransactions",
+        "params": ["*", 10, 0, True]  # Note: Python uses True, not true
+    }
+
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+
+    print(response.status_code)
+    if response.status_code == 200:
+        try:
+            rpc_response = response.json()
+            transactions = rpc_response.get("result", [])
+
+            # Search for a transaction with matching amount
+            for tx in transactions:
+                tx_amount = tx.get("amount", 0)
+
+                # Compare amounts (using float comparison with tolerance for precision)
+                if abs(float(tx_amount) - float(amount)) < 0.00000001:
+                    return jsonify({
+                        "success": True,
+                        "chainlock": tx.get("chainlock", False),
+                        "instantlock": tx.get("instantlock", False)
+                    })
+
+            # No matching transaction found
+            return jsonify({
+                "success": False,
+                "chainlock": False,
+                "instantlock": False,
+                "error": "No transaction found with matching amount"
+            })
+
+        except Exception as e:
+            print(f"Error parsing response: {str(e)}")
+            return jsonify({
+                "success": False,
+                "chainlock": False,
+                "instantlock": False,
+                "error": "Failed to parse RPC response"
+            }), 500
+    else:
+        return jsonify({
+            "success": False,
+            "chainlock": False,
+            "instantlock": False,
+            "error": f"RPC request failed with status {response.status_code}"
+        }), 502
+
+    
 
 @app.route('/v1/firo/getsparkwalletbalance', methods=['GET'])
 def get_spark_wallet_balance():
