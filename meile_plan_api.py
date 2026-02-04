@@ -33,7 +33,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20260130.1833
+VERSION=20260204.0138
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -990,7 +990,7 @@ def get_zano_balances():
 @app.route('/v1/zeph/newaddress', methods=['GET'])
 @auth.login_required
 def get_new_zeph_address():
-    url = "https://zephyr.ithurtswhenip.ee/json_rpc"
+    url = "https://zeph.ithurtswhenip.ee/json_rpc"
     headers = {'content-type': 'text/plain;'}
     data = {
             "jsonrpc": "2.0",
@@ -1013,6 +1013,7 @@ def get_new_zeph_address():
     if response.status_code == 200:
         print(response.json())
         result = response.json()
+        print(result)
         return jsonify({
             "success" : True,
             "address" : result['result']['address'],
@@ -1043,7 +1044,7 @@ def get_zephyr_balance():
             'error': 'Invalid request parameters'
         }), 400
 
-    url = "https://zephyr.ithurtswhenip.ee/json_rpc"
+    url = "https://zeph.ithurtswhenip.ee/json_rpc"
     headers = {'content-type': 'application/json'}
 
     payload = {
@@ -1066,7 +1067,7 @@ def get_zephyr_balance():
             url,
             json=payload,
             headers=headers,
-            auth=HTTPDigestAuth(scrtxxs.ZEPHYRUSER, scrtxxs.ZEPHYRPASSWORD)
+            auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
         )
         result = response.json().get('result', {})
     except Exception as e:
