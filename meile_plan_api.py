@@ -987,6 +987,140 @@ def get_zano_balances():
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
+@app.route('/v1/zeph/newaddress', methods=['GET'])
+@auth.login_required
+def get_new_zeph_address():
+    url = "https://zephyr.ithurtswhenip.ee/json_rpc"
+    headers = {'content-type': 'text/plain;'}
+    data = {
+            "jsonrpc": "2.0",
+            "id": "0",
+            "method": "create_address",
+            "params": {
+              "account_index": 0,
+              "label": "meile payment"
+            }
+          }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(response.json())
+        result = response.json()
+        return jsonify({
+            "success" : True,
+            "address" : result['result']['address'],
+            "index"   : result['result']['address_index']
+            })
+        #return jsonify(response.json())
+    else:
+        return jsonify({
+            "success" : False,
+            "address" : None,
+            "index"   : None
+            })
+        
+@app.route('/v1/zephyr/getbalance', methods=['POST'])
+@auth.login_required
+def get_zephyr_balance():
+    try:
+        data   = request.json
+        index  = data['index']
+        amount = data['amount']
+        asset  = data['asset']
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'success': False,
+            'confirmations': None,
+            'difference': None,
+            'error': 'Invalid request parameters'
+        }), 400
+
+    url = "https://zephyr.ithurtswhenip.ee/json_rpc"
+    headers = {'content-type': 'application/json'}
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "0",
+        "method": "get_transfers",
+        "params": {
+            "in": True,
+            "pool": True,
+            "out": False,
+            "pending": False,
+            "failed": False,
+            "account_index": 0,
+            "subaddr_indices": [index]
+        }
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            auth=HTTPDigestAuth(scrtxxs.ZEPHYRUSER, scrtxxs.ZEPHYRPASSWORD)
+        )
+        result = response.json().get('result', {})
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'success': False,
+            'confirmations': None,
+            'difference': None,
+            'error': 'RPC request failed'
+        }), 500
+
+    confirmed_txs = result.get('in', [])
+    pool_txs = result.get('pool', [])
+
+    all_txs = []
+
+    for tx in confirmed_txs:
+        if tx.get('asset_type') == asset:
+            all_txs.append({
+                'amount': tx.get('amount', 0),
+                'confirmations': tx.get('confirmations', 0),
+                'in_pool': False
+            })
+
+    for tx in pool_txs:
+        if tx.get('asset_type') == asset:
+            all_txs.append({
+                'amount': tx.get('amount', 0),
+                'confirmations': 0,
+                'in_pool': True
+            })
+
+    if not all_txs:
+        return jsonify({
+            'success': False,
+            'confirmations': 0,
+            'difference': -amount
+        })
+
+    total_received = sum(tx['amount'] for tx in all_txs)
+    total_received_decimal = total_received / 1e12
+    difference = amount - total_received_decimal 
+    
+    min_confirmations = min(tx['confirmations'] for tx in all_txs)
+    success = total_received_decimal >= amount
+
+    return jsonify({
+        'success': success,
+        'confirmations': min_confirmations,
+        'difference': difference
+    })
+        
+
+    
     
 def UpdateMeileSubscriberDB():
     pass
