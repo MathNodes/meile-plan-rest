@@ -15,7 +15,7 @@ from sentinel_sdk.utils import search_attribute
 
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
 
-VERSION = 20241124.1758
+VERSION = 20251210.1545
 
 class PurgeExpiredSubs():
     
@@ -57,7 +57,7 @@ class PurgeExpiredSubs():
         
         return c.fetchall()
     def update_sub_table(self,sub,db):
-        q = f"UPDATE meile_subscriptions SET active = 0 WHERE id = {sub['id']};"
+        q = f"UPDATE meile_subscriptions SET active = 0, subscription_id = NULL WHERE id = {sub['id']};"
         c = db.cursor()
         c.execute(q)
         db.commit()
@@ -66,42 +66,25 @@ class PurgeExpiredSubs():
     def deactivate_expired_subscriptions(self, db, subs_table):
         NOW = datetime.now()
         self.LOGFILE.write(f"-----------------------------{NOW}-------------------------------------\n")
-        self.LOGFILE.write("[pes]: Removing Allocations...\n")        
+        self.LOGFILE.write("[pes]: Cancelling subscription...\n")        
         for sub in subs_table:
             if sub['expires'] < NOW:
-                self.LOGFILE.write(f"[pes]: ({sub['wallet']}) Querying allocation...\n")
-                
-                try:
-                    allocation = self.sdk.subscriptions.QueryAllocation(address=sub['wallet'], 
-                                                                        subscription_id=int(sub['subscription_id'])
-                                                                        )
-                    
-                    ubytes = int(allocation.utilised_bytes)
-                    self.LOGFILE.write(f"({sub['wallet']}) Utilised bytes: {ubytes}\n")
-                except Exception as e:
-                    self.LOGFILE.write(f"{str(e)}\n")
-                    self.LOGFILE.write("Could not get allocation amt... skipping\n")
-                    continue
-                
-                self.LOGFILE.write(f"[pes]: Unallocating; {sub}\n")
-                
+                self.LOGFILE.write(f"[pes]: Wallet: {sub['wallet']}, subid: {sub['subscription_id']}...\n")
+
                 try:
                 
                     tx_params = TxParams(
                         gas_multiplier=1.15
                     )
                     
-                    tx = self.sdk.subscriptions.Allocate(address=sub['wallet'], 
-                                                         bytes=str(ubytes), 
-                                                         id=sub['subscription_id'], 
-                                                         tx_params=tx_params
-                                                         )
+                    tx = self.sdk.subscriptions.Cancel(sub['subscription_id'], tx_params)
                     
                     if tx.get("log", None) is not None:
                         self.LOGFILE.write(f"{tx['log']}\n")
                         continue
                     if tx.get("hash", None) is not None:
                         tx_response = self.sdk.subscriptions.wait_for_tx(tx['hash'], timeout=30)
+                        print(tx_response)
                         self.LOGFILE.write(f"[pes]: {json.dumps(tx_response)}\n")
                     else:
                         self.LOGFILE.write("[pes]: Error getting tx response... Skipping...\n")

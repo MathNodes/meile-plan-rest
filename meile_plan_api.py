@@ -22,6 +22,7 @@ from sentinel_sdk.sdk import SDKInstance
 from sentinel_sdk.types import TxParams
 from sentinel_sdk.utils import search_attribute
 from sentinel_protobuf.cosmos.base.v1beta1.coin_pb2 import Coin
+from sentinel_protobuf.sentinel.types.v1.renewal_pb2 import RenewalPricePolicy
 from mospy import Transaction
 from keyrings.cryptfile.cryptfile import CryptFileKeyring
 from grpc import RpcError
@@ -32,7 +33,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20250911.1514
+VERSION=20260204.0138
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -168,23 +169,24 @@ def GetPlanCostDenom(uuid):
     
     return plan411[0], plan411[1]
 
-def CheckRenewalStatus(subid, wallet):
+def CheckRenewalStatus(wallet, plan_id):
     
-    query = f"SELECT subscription_id, subscribe_date, expires FROM meile_subscriptions WHERE wallet = '{wallet}' AND subscription_id = {subid}"
+    
+    query = f"SELECT subscription_id, subscribe_date, expires FROM meile_subscriptions WHERE wallet = '{wallet}' AND plan_id = {plan_id};"
     c = GetDBCursor()
     c.execute(query)
     
     results = c.fetchone()
     
-    if results is not None:
-        if results[0] and results[1]:
+    if results:
+        if results[1] and results[2]:
             return True,results[1],results[2]
         else: 
             return False, None, None          
     else: 
         return False, None, None
     
-def AllocateTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
+def SubToPlan(plan_id: int, wallet: str):
     # Add logging    
     WalletLogFile = os.path.join(WalletLogDIR, "meile_allocate.log") 
     log_file_descriptor = open(WalletLogFile, "a+")
@@ -196,7 +198,53 @@ def AllocateTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
                 denom="udvpn"
                 )
     
-    tx = sdk.subscriptions.Allocate(address=wallet, bytes=str(size), id=sub_id, tx_params=tx_params)
+    
+    tx = sdk.subscriptions.StartSubscription(plan_id=plan_id,
+                                            denom="udvpn", 
+                                            renewal = RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL, 
+                                            tx_params=tx_params)
+    
+    if tx.get("log", None) is not None:
+        log_file_descriptor.write(f"\nERROR:\n{tx.get('log')}")
+        log_file_descriptor.flush()
+        log_file_descriptor.close()
+        message = "Error subscribing to plan. Please contact support@mathnodes.com for assistance."        
+        return {"status" : False, 
+                "message" : message, 
+                "hash" : "0x0", 
+                "tx_response" : None,
+                "sub_id" : None}
+    
+    if tx.get("hash", None) is not None:
+        tx_response = sdk.nodes.wait_transaction(tx["hash"])
+        log_file_descriptor.write(f"\nSuccess:\n {tx_response}")
+        subscription_id = search_attribute(
+                tx_response, "sentinel.subscription.v3.EventCreate", "subscription_id"
+            )
+        log_file_descriptor.flush()
+        log_file_descriptor.close()
+        return {"status" : True, 
+                "message" : "Success.",
+                "hash" : tx['hash'], 
+                "tx_response" : tx_response,
+                'sub_id' : subscription_id}
+    
+def ShareSubTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
+    # Add logging    
+    WalletLogFile = os.path.join(WalletLogDIR, "meile_allocate.log") 
+    log_file_descriptor = open(WalletLogFile, "a+")
+    
+    tx_params = TxParams(
+                gas=150000,
+                gas_multiplier=1.2,
+                fee_amount=31415,
+                denom="udvpn"
+                )
+    
+    tx = sdk.subscriptions.ShareSubscription(subscription_id=sub_id,
+                                             wallet_address=wallet, 
+                                             bytes=str(size), 
+                                             tx_params=tx_params)
     
     if tx.get("log", None) is not None:
         log_file_descriptor.write(f"\nERROR:\n{tx.get('log')}")
@@ -233,7 +281,7 @@ def FeeGrant(wallet):
     tx.add_msg(
         tx_type='transfer',
         sender=sdk._account,
-        receipient=wallet,
+        recipient=wallet,
         amount=1000000,
         denom="udvpn",
     )
@@ -264,14 +312,17 @@ def add_wallet_to_plan():
     renewal = False
     hash = "0x0"
     try: 
-        JSON      = request.json
-        wallet    = JSON['data']['wallet']
-        plan_id   = int(JSON['data']['plan_id'])     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
-        duration  = int(JSON['data']['duration'])   # duration of plan subscription, in months
-        sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
-        uuid      = JSON['data']['uuid']            # uuid of subscription
-        amt_paid  = float(JSON['data']['amt'])
-        denom     = JSON['data']['denom']
+        JSON          = request.json
+        wallet        = JSON['data']['wallet']
+        plan_id       = int(JSON['data']['plan_id'])     # plan ID, we should have 4 or 5 plans. Will be a UUID. 
+        duration      = int(JSON['data']['duration'])   # duration of plan subscription, in months
+        try: 
+            old_sub_id    = int(JSON['data']['sub_id'])      # subscription ID of plan
+        except:
+            old_sub_id = 0
+        uuid          = JSON['data']['uuid']            # uuid of subscription
+        amt_paid      = float(JSON['data']['amt'])
+        denom         = JSON['data']['denom']
     except Exception as e:
         print(str(e))
         status = False
@@ -292,8 +343,9 @@ def add_wallet_to_plan():
         print(PlanTX)
         return jsonify(PlanTX)
     
-    renewal,subscription_date, expiration = CheckRenewalStatus(sub_id, wallet)
+    renewal,subscription_date, expiration = CheckRenewalStatus(wallet, plan_id)
     
+    print(f"renewal: {renewal}, sub date: {subscription_date}")
     now = datetime.now()
     if expiration:
         if now < expiration:
@@ -307,7 +359,23 @@ def add_wallet_to_plan():
     WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log") 
     log_file_descriptor = open(WalletLogFile, "a+")
     
-    result = AllocateTX(sdk, sub_id, wallet)
+    sub_result = SubToPlan(plan_id, wallet)
+    if not sub_result['status']:
+        PlanTX = {'status' : result["status"],
+                  'wallet' : wallet, 
+                  'planid' : plan_id, 
+                  'duration' : duration, 
+                  'tx' : result["hash"], 
+                  'message' : result["message"],
+                  'expires' : None}
+        print(PlanTX)
+        log_file_descriptor.write(json.dumps(PlanTX) + '\n')
+        return jsonify(PlanTX)
+    
+    else:
+        sub_id = int(sub_result['sub_id'])
+    
+    result = ShareSubTX(sdk, sub_id, wallet)
     
     if not result['status']:
         PlanTX = {'status' : result["status"],
@@ -339,8 +407,8 @@ def add_wallet_to_plan():
         query = '''
                 UPDATE meile_subscriptions 
                 SET uuid = "%s", wallet = "%s", subscription_id = %d, plan_id = %d, amt_paid = %.8f, amt_denom = "%s", subscribe_date = "%s", subscription_duration = %d, expires = "%s", active = "1"
-                WHERE wallet = "%s" AND subscription_id = %d
-                ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, sub_id) 
+                WHERE wallet = "%s" AND plan_id = %d
+                ''' % (uuid, wallet, sub_id, plan_id, amt_paid, denom, subscription_date, duration, str(expires), wallet, plan_id) 
                 
     else:
         query = '''
@@ -350,6 +418,7 @@ def add_wallet_to_plan():
 
 
     print("Updating Subscription Table...")
+    print(query)
     
     try:
         UpdateDBTable(query)    
@@ -357,7 +426,19 @@ def add_wallet_to_plan():
         print(str(e))
         log_file_descriptor.write("ERROR ADDING WALLET TO SUBSCRIPTION DATABASE" + '\n')
         
-        
+    query = '''
+            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration)
+            VALUES("%s", %d, %.8f, "%s", "%s", %d)
+            ''' % (wallet, plan_id, amt_paid, denom, str(now), duration)     
+            
+    print("Updating Itemized Subscription Table...")
+    print(query)
+    
+    try:
+        UpdateDBTable(query)    
+    except Exception as e:
+        print(str(e))
+        log_file_descriptor.write("ERROR ADDING WALLET TO ITEMIZED SUBSCRIPTION DATABASE" + '\n')
         
     result = FeeGrant(wallet)
     
@@ -469,7 +550,7 @@ def allocate():
 @app.route('/v1/pirate/newaddress', methods=['GET'])
 @auth.login_required
 def get_new_zaddress():
-    url = "http://127.0.0.1:45453/"
+    url = scrtxxs.PIRATEHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -504,7 +585,7 @@ def get_pirate_balance():
         print(str(e))
         return False
     
-    url = "http://127.0.0.1:45453/"
+    url = scrtxxs.PIRATEHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -532,7 +613,7 @@ def get_pirate_balance():
 @app.route('/v1/pirate/getbalances', methods=['GET'])    
 def get_pirate_balances():
     
-    url = "http://127.0.0.1:45453/"
+    url = scrtxxs.PIRATEHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -559,7 +640,7 @@ def get_pirate_balances():
 @app.route('/v1/firo/newsparkaddress', methods=['GET'])
 @auth.login_required
 def get_new_saddress():
-    url = "https://firo.mathnodes.com:8888/"
+    url = scrtxxs.FIROHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -593,7 +674,7 @@ def get_spark_balance():
         print(str(e))
         return False
     
-    url = "https://firo.mathnodes.com:8888/"
+    url = scrtxxs.FIROHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -616,10 +697,84 @@ def get_spark_balance():
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
+@app.route('/v1/firo/getsparktxs', methods=['POST'])
+@auth.login_required    
+def get_spark_txs():
+    try:
+        JSON = request.json
+        amount = JSON['amount']
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            "success": False,
+            "chainlock": False,
+            "instantlock": False,
+            "error": "Invalid request body"
+        }), 400
+
+    url = scrtxxs.FIROHOST
+    headers = {'content-type': 'text/plain;'}
+    data = {
+        "jsonrpc": "1.0",
+        "id": "meile", 
+        "method": "listtransactions",
+        "params": ["*", 10, 0, True]  # Note: Python uses True, not true
+    }
+
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+
+    print(response.status_code)
+    if response.status_code == 200:
+        try:
+            rpc_response = response.json()
+            transactions = rpc_response.get("result", [])
+
+            # Search for a transaction with matching amount
+            for tx in transactions:
+                tx_amount = tx.get("amount", 0)
+
+                # Compare amounts (using float comparison with tolerance for precision)
+                if abs(float(tx_amount) - float(amount)) < 0.00000001:
+                    return jsonify({
+                        "success": True,
+                        "chainlock": tx.get("chainlock", False),
+                        "instantlock": tx.get("instantlock", False)
+                    })
+
+            # No matching transaction found
+            return jsonify({
+                "success": False,
+                "chainlock": False,
+                "instantlock": False,
+                "error": "No transaction found with matching amount"
+            })
+
+        except Exception as e:
+            print(f"Error parsing response: {str(e)}")
+            return jsonify({
+                "success": False,
+                "chainlock": False,
+                "instantlock": False,
+                "error": "Failed to parse RPC response"
+            }), 500
+    else:
+        return jsonify({
+            "success": False,
+            "chainlock": False,
+            "instantlock": False,
+            "error": f"RPC request failed with status {response.status_code}"
+        }), 502
+
+    
 
 @app.route('/v1/firo/getsparkwalletbalance', methods=['GET'])
 def get_spark_wallet_balance():
-    url = "https://firo.mathnodes.com:8888/"
+    url = scrtxxs.FIROHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -646,7 +801,7 @@ def get_spark_wallet_balance():
 @app.route('/v1/pivx/newaddress', methods=['GET'])
 @auth.login_required
 def get_new_paddress():
-    url = "https://pivx.mathnodes.com:9999/"
+    url = scrtxxs.PIVXHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -681,7 +836,7 @@ def get_pivx_balance():
         print(str(e))
         return False
     
-    url = "https://pivx.mathnodes.com:9999/"
+    url = scrtxxs.PIVXHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -707,7 +862,7 @@ def get_pivx_balance():
 @app.route('/v1/pivx/getbalances', methods=['GET'])    
 def get_pivx_balances():
     
-    url = "https://pivx.mathnodes.com:9999/"
+    url = scrtxxs.PIVXHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -751,7 +906,7 @@ def get_zano_txs():
     
     asset_id = ASSET_IDS[coin]
     
-    url = "https://zano.mindcontrollers.xyz:7778/json_rpc"
+    url = scrtxxs.ZANOHOST
     headers = {'content-type': 'text/plain;'}
     data = {
           "id": 0,
@@ -810,7 +965,7 @@ def get_zano_txs():
         
 @app.route('/v1/zano/getbalances', methods=['GET'])    
 def get_zano_balances():
-    url = "https://zano.mindcontrollers.xyz:7778/json_rpc"
+    url = scrtxxs.ZANOHOST
     headers = {'content-type': 'text/plain;'}
     data = {
               "id": 0,
@@ -831,6 +986,141 @@ def get_zano_balances():
         return jsonify(response.json())
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
+    
+@app.route('/v1/zeph/newaddress', methods=['GET'])
+@auth.login_required
+def get_new_zeph_address():
+    url = scrtxxs.ZEPHYRHOST
+    headers = {'content-type': 'text/plain;'}
+    data = {
+            "jsonrpc": "2.0",
+            "id": "0",
+            "method": "create_address",
+            "params": {
+              "account_index": 0,
+              "label": "meile payment"
+            }
+          }
+    
+    response = requests.post(
+        url,
+        json=data,
+        headers=headers,
+        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+    )
+    
+    print(response.status_code)
+    if response.status_code == 200:
+        print(response.json())
+        result = response.json()
+        print(result)
+        return jsonify({
+            "success" : True,
+            "address" : result['result']['address'],
+            "index"   : result['result']['address_index']
+            })
+        #return jsonify(response.json())
+    else:
+        return jsonify({
+            "success" : False,
+            "address" : None,
+            "index"   : None
+            })
+        
+@app.route('/v1/zephyr/getbalance', methods=['POST'])
+@auth.login_required
+def get_zephyr_balance():
+    try:
+        data   = request.json
+        index  = data['index']
+        amount = data['amount']
+        asset  = data['asset']
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'success': False,
+            'confirmations': None,
+            'difference': None,
+            'error': 'Invalid request parameters'
+        }), 400
+
+    url = scrtxxs.ZEPHYRHOST
+    headers = {'content-type': 'application/json'}
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "0",
+        "method": "get_transfers",
+        "params": {
+            "in": True,
+            "pool": True,
+            "out": False,
+            "pending": False,
+            "failed": False,
+            "account_index": 0,
+            "subaddr_indices": [index]
+        }
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+        )
+        result = response.json().get('result', {})
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'success': False,
+            'confirmations': None,
+            'difference': None,
+            'error': 'RPC request failed'
+        }), 500
+
+    confirmed_txs = result.get('in', [])
+    pool_txs = result.get('pool', [])
+
+    all_txs = []
+
+    for tx in confirmed_txs:
+        if tx.get('asset_type') == asset:
+            all_txs.append({
+                'amount': tx.get('amount', 0),
+                'confirmations': tx.get('confirmations', 0),
+                'in_pool': False
+            })
+
+    for tx in pool_txs:
+        if tx.get('asset_type') == asset:
+            all_txs.append({
+                'amount': tx.get('amount', 0),
+                'confirmations': 0,
+                'in_pool': True
+            })
+
+    if not all_txs:
+        return jsonify({
+            'success': False,
+            'confirmations': 0,
+            'difference': -amount
+        })
+
+    total_received = sum(tx['amount'] for tx in all_txs)
+    total_received_decimal = total_received / 1e12
+    difference = amount - total_received_decimal 
+    
+    min_confirmations = min(tx['confirmations'] for tx in all_txs)
+    success = total_received_decimal >= amount
+
+    return jsonify({
+        'success': success,
+        'confirmations': min_confirmations,
+        'difference': difference
+    })
+        
+
     
     
 def UpdateMeileSubscriberDB():
