@@ -550,7 +550,7 @@ def allocate():
 @app.route('/v1/pirate/newaddress', methods=['GET'])
 @auth.login_required
 def get_new_zaddress():
-    url = "http://127.0.0.1:45453/"
+    url = scrtxxs.PIRATEHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -585,7 +585,7 @@ def get_pirate_balance():
         print(str(e))
         return False
     
-    url = "http://127.0.0.1:45453/"
+    url = scrtxxs.PIRATEHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -613,7 +613,7 @@ def get_pirate_balance():
 @app.route('/v1/pirate/getbalances', methods=['GET'])    
 def get_pirate_balances():
     
-    url = "http://127.0.0.1:45453/"
+    url = scrtxxs.PIRATEHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -640,7 +640,7 @@ def get_pirate_balances():
 @app.route('/v1/firo/newsparkaddress', methods=['GET'])
 @auth.login_required
 def get_new_saddress():
-    url = "https://firo.mathnodes.com:8888/"
+    url = scrtxxs.FIROHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -674,7 +674,7 @@ def get_spark_balance():
         print(str(e))
         return False
     
-    url = "https://firo.mathnodes.com:8888/"
+    url = scrtxxs.FIROHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -712,7 +712,7 @@ def get_spark_txs():
             "error": "Invalid request body"
         }), 400
 
-    url = "https://firo-rpc.host.com:8888/"
+    url = scrtxxs.FIROHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -774,7 +774,7 @@ def get_spark_txs():
 
 @app.route('/v1/firo/getsparkwalletbalance', methods=['GET'])
 def get_spark_wallet_balance():
-    url = "https://firo.mathnodes.com:8888/"
+    url = scrtxxs.FIROHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -801,7 +801,7 @@ def get_spark_wallet_balance():
 @app.route('/v1/pivx/newaddress', methods=['GET'])
 @auth.login_required
 def get_new_paddress():
-    url = "https://pivx.mathnodes.com:9999/"
+    url = scrtxxs.PIVXHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -836,7 +836,7 @@ def get_pivx_balance():
         print(str(e))
         return False
     
-    url = "https://pivx.mathnodes.com:9999/"
+    url = scrtxxs.PIVXHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -862,7 +862,7 @@ def get_pivx_balance():
 @app.route('/v1/pivx/getbalances', methods=['GET'])    
 def get_pivx_balances():
     
-    url = "https://pivx.mathnodes.com:9999/"
+    url = scrtxxs.PIVXHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
@@ -906,7 +906,7 @@ def get_zano_txs():
     
     asset_id = ASSET_IDS[coin]
     
-    url = "https://zano.mindcontrollers.xyz:7778/json_rpc"
+    url = scrtxxs.ZANOHOST
     headers = {'content-type': 'text/plain;'}
     data = {
           "id": 0,
@@ -965,7 +965,7 @@ def get_zano_txs():
         
 @app.route('/v1/zano/getbalances', methods=['GET'])    
 def get_zano_balances():
-    url = "https://zano.mindcontrollers.xyz:7778/json_rpc"
+    url = scrtxxs.ZANOHOST
     headers = {'content-type': 'text/plain;'}
     data = {
               "id": 0,
@@ -990,7 +990,7 @@ def get_zano_balances():
 @app.route('/v1/zeph/newaddress', methods=['GET'])
 @auth.login_required
 def get_new_zeph_address():
-    url = "https://zeph.ithurtswhenip.ee/json_rpc"
+    url = scrtxxs.ZEPHYRHOST
     headers = {'content-type': 'text/plain;'}
     data = {
             "jsonrpc": "2.0",
@@ -1044,7 +1044,7 @@ def get_zephyr_balance():
             'error': 'Invalid request parameters'
         }), 400
 
-    url = "https://zeph.ithurtswhenip.ee/json_rpc"
+    url = scrtxxs.ZEPHYRHOST
     headers = {'content-type': 'application/json'}
 
     payload = {
