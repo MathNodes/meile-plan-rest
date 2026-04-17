@@ -7,6 +7,7 @@ from os import path
 import json
 import requests
 from requests.auth import HTTPBasicAuth as RequestsAuth
+from requests.auth import HTTPDigestAuth
 
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -33,7 +34,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20260204.0138
+VERSION=20260407.0208
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -177,7 +178,7 @@ def CheckRenewalStatus(wallet, plan_id):
     c.execute(query)
     
     results = c.fetchone()
-    
+    print(results)
     if results:
         if results[1] and results[2]:
             return True,results[1],results[2]
@@ -282,7 +283,7 @@ def FeeGrant(wallet):
         tx_type='transfer',
         sender=sdk._account,
         recipient=wallet,
-        amount=1000000,
+        amount=4000000,
         denom="udvpn",
     )
     
@@ -344,8 +345,11 @@ def add_wallet_to_plan():
         return jsonify(PlanTX)
     
     renewal,subscription_date, expiration = CheckRenewalStatus(wallet, plan_id)
-    
-    print(f"renewal: {renewal}, sub date: {subscription_date}")
+    print(f"renewal: {renewal}, sub date: {subscription_date}") 
+    try:
+        print(f"User: {g.user.username}")
+    except:
+        pass   
     now = datetime.now()
     if expiration:
         if now < expiration:
@@ -427,9 +431,9 @@ def add_wallet_to_plan():
         log_file_descriptor.write("ERROR ADDING WALLET TO SUBSCRIPTION DATABASE" + '\n')
         
     query = '''
-            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration)
-            VALUES("%s", %d, %.8f, "%s", "%s", %d)
-            ''' % (wallet, plan_id, amt_paid, denom, str(now), duration)     
+            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration, user)
+            VALUES("%s", %d, %.8f, "%s", "%s", %d, "%s")
+            ''' % (wallet, plan_id, amt_paid, denom, str(now), duration, g.user.username)     
             
     print("Updating Itemized Subscription Table...")
     print(query)
@@ -733,7 +737,7 @@ def get_spark_txs():
         try:
             rpc_response = response.json()
             transactions = rpc_response.get("result", [])
-
+            print(transactions[-1])
             # Search for a transaction with matching amount
             for tx in transactions:
                 tx_amount = tx.get("amount", 0)
@@ -770,7 +774,6 @@ def get_spark_txs():
             "error": f"RPC request failed with status {response.status_code}"
         }), 502
 
-    
 
 @app.route('/v1/firo/getsparkwalletbalance', methods=['GET'])
 def get_spark_wallet_balance():
@@ -986,12 +989,12 @@ def get_zano_balances():
         return jsonify(response.json())
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
-    
-@app.route('/v1/zeph/newaddress', methods=['GET'])
+
+@app.route('/v1/zephyr/newaddress', methods=['GET'])
 @auth.login_required
 def get_new_zeph_address():
     url = scrtxxs.ZEPHYRHOST
-    headers = {'content-type': 'text/plain;'}
+    headers = {'content-type': 'application/json'}
     data = {
             "jsonrpc": "2.0",
             "id": "0",
@@ -1006,14 +1009,12 @@ def get_new_zeph_address():
         url,
         json=data,
         headers=headers,
-        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+        auth=HTTPDigestAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
     )
-    
     print(response.status_code)
     if response.status_code == 200:
         print(response.json())
         result = response.json()
-        print(result)
         return jsonify({
             "success" : True,
             "address" : result['result']['address'],
@@ -1067,7 +1068,7 @@ def get_zephyr_balance():
             url,
             json=payload,
             headers=headers,
-            auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+            auth=HTTPDigestAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
         )
         result = response.json().get('result', {})
     except Exception as e:
@@ -1104,27 +1105,61 @@ def get_zephyr_balance():
         return jsonify({
             'success': False,
             'confirmations': 0,
-            'difference': -amount
+            'difference': amount
         })
 
     total_received = sum(tx['amount'] for tx in all_txs)
+    print(f"Total Received: {total_received}")
     total_received_decimal = total_received / 1e12
+    print(f"Total Received Decimal: {total_received_decimal}")
     difference = amount - total_received_decimal 
+    print(f"difference: {difference}")
     
     min_confirmations = min(tx['confirmations'] for tx in all_txs)
     success = total_received_decimal >= amount
-
+    print(f"Success: {success}")
     return jsonify({
         'success': success,
         'confirmations': min_confirmations,
         'difference': difference
     })
-        
 
-    
-    
+@app.route('/v1/zephyr/getallbalances', methods=['GET'])
+#@auth.login_required
+def get_zephyr_all_balances():
+    url = scrtxxs.ZEPHYRHOST
+    headers = {'Content-Type': 'application/json'}
+
+    all_balances = []
+
+    for asset in ['ZPH', 'ZSD', 'ZRS']:
+        response = requests.post(url, json={
+            "jsonrpc": "2.0",
+            "id": "0",
+            "method": "get_balance",
+            "params": {
+                "account_index": 0,
+                "asset_type": asset
+            }
+        }, headers=headers, auth=HTTPDigestAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD))
+
+        result = response.json().get('result', {})
+        for bal in result.get('balances', []):
+            for sub in bal.get('per_subaddress', []):
+                all_balances.append({
+                    'index': sub['address_index'],
+                    'address': sub['address'],
+                    'asset_type': asset,
+                    'balance': sub['balance'] / 1e12,
+                    'label': sub.get('label', '')
+                })
+
+    return jsonify({'result': all_balances})
+
+        
 def UpdateMeileSubscriberDB():
     pass
 
 
 db.create_all()
+
