@@ -34,7 +34,7 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20260416.2225
+VERSION=20260604.2244
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -888,16 +888,30 @@ def get_pivx_balances():
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
-
+'''
 @app.route('/v1/zano/gettxs', methods=['POST'])
 @auth.login_required    
 def get_zano_txs():
     SATOSHI = 1000000000000
     SATOSHI_FUSD = 10000
+    SATOSHI_BNB = 1000000
+    SATOSHI_BCH = 100000000
+    SATOSHI_BTC = SATOSHI_BCH
+    SATOSHI_DAI = SATOSHI_BNB
+    SATOSHI_ETH = SATOSHI_BNB
+    SATOSHI_SOL = SATOSHI_BNB
+    SATOSHI_TON = SATOSHI_BNB
     accumulated = 0
     FOUND = False
     ASSET_IDS = {'zano' : 'd6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a',
-                 'fusd' : '86143388bd056a8f0bab669f78f14873fac8e2dd8d57898cdb725a2d5e2e4f8f'}
+                 'fusd' : '86143388bd056a8f0bab669f78f14873fac8e2dd8d57898cdb725a2d5e2e4f8f',
+                 'bchx' : '3de9ad7243afa49e0ade6839e97a9f10a527c4958ece2fc9cb1b87a44032167d',
+                 'bnbx' : '6ca3fa07f1b6a75b6e195d2918c32228765968b54ea691c75958affa1c4073fb',
+                 'btcx' : '040a180aca4194a158c17945dd115db42086f6f074c1f77838621a4927fffa91',
+                 'daix' : '24819c4b65786c3ac424e05d9ef4ab212de6222cc73bc5c4b012df5a3107eea4',
+                 'ethx' : '93da681503353509367e241cda3234299dedbbad9ec851de31e900490807bf0c',
+                 'solx' : '65b3bc549c8bc2c773781d5436f25f7af84644e61baaabd675d9867b007d17b4',
+                 'tonx' : 'bfa6609a94e39f418d9adb000f89edc7bd180fd120f1cd272201220e3070fb4f'}
     
     try:
         JSON      = request.json
@@ -918,7 +932,7 @@ def get_zano_txs():
           "params": {
             "count": 10,
             "exclude_mining_txs": False,
-            "exclu    de_unconfirmed": False,
+            "exclude_unconfirmed": False,
             "offset": 0,
             "order": "FROM_END_TO_BEGIN",
             "update_provision_info": True
@@ -954,7 +968,7 @@ def get_zano_txs():
                     accumulated += float(tx['employed_entries']['receive'][0]['amount']) / SATOSHI
                 
         if FOUND:
-            return jsonify({'result' : round(float(accumulated),4),
+            return jsonify({'result' : round(float(accumulated),8),
                             'height' : txheight,
                             'error' : None})
         else:
@@ -965,6 +979,196 @@ def get_zano_txs():
         return jsonify({'result': 0.0, 
                         'error': response.status_code,  
                         'height' : None})
+'''
+    
+@app.route('/v1/zano/gettxs', methods=['POST'])
+@auth.login_required
+def get_zano_txs():
+    ASSETS = {
+        'zano': {
+            'asset_id': 'd6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a',
+            'divisor': 10 ** 12,
+        },
+        'fusd': {
+            'asset_id': '86143388bd056a8f0bab669f78f14873fac8e2dd8d57898cdb725a2d5e2e4f8f',
+            'divisor': 10 ** 4,
+        },
+        'bchx': {
+            'asset_id': '3de9ad7243afa49e0ade6839e97a9f10a527c4958ece2fc9cb1b87a44032167d',
+            'divisor': 10 ** 8,
+        },
+        'bnbx': {
+            'asset_id': '6ca3fa07f1b6a75b6e195d2918c32228765968b54ea691c75958affa1c4073fb',
+            'divisor': 10 ** 6,
+        },
+        'btcx': {
+            'asset_id': '040a180aca4194a158c17945dd115db42086f6f074c1f77838621a4927fffa91',
+            'divisor': 10 ** 8,
+        },
+        'daix': {
+            'asset_id': '24819c4b65786c3ac424e05d9ef4ab212de6222cc73bc5c4b012df5a3107eea4',
+            'divisor': 10 ** 6,
+        },
+        'ethx': {
+            'asset_id': '93da681503353509367e241cda3234299dedbbad9ec851de31e900490807bf0c',
+            'divisor': 10 ** 6,
+        },
+        'solx': {
+            'asset_id': '65b3bc549c8bc2c773781d5436f25f7af84644e61baaabd675d9867b007d17b4',
+            'divisor': 10 ** 6,
+        },
+        'tonx': {
+            'asset_id': 'bfa6609a94e39f418d9adb000f89edc7bd180fd120f1cd272201220e3070fb4f',
+            'divisor': 10 ** 6,
+        },
+    }
+
+    try:
+        body = request.get_json(force=True)
+
+        address = body.get('address')
+        coin = body.get('coin', '').lower()
+
+        if not address:
+            return jsonify({
+                'result': 0.0,
+                'height': None,
+                'error': 'Missing address',
+            }), 400
+
+        if coin not in ASSETS:
+            return jsonify({
+                'result': 0.0,
+                'height': None,
+                'error': f'Unsupported coin: {coin}',
+            }), 400
+
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': 'Invalid JSON request',
+        }), 400
+
+    asset_id = ASSETS[coin]['asset_id']
+    divisor = ASSETS[coin]['divisor']
+
+    url = scrtxxs.ZANOHOST
+
+    headers = {
+        'Content-Type': 'application/json',
+    }
+
+    data = {
+        'id': 0,
+        'jsonrpc': '2.0',
+        'method': 'get_recent_txs_and_info',
+        'params': {
+            'count': 10,
+            'exclude_mining_txs': False,
+            'exclude_unconfirmed': False,
+            'offset': 0,
+            'order': 'FROM_END_TO_BEGIN',
+            'update_provision_info': True,
+        },
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=data,
+            headers=headers,
+            timeout=20,
+        )
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': str(e),
+        }), 500
+
+    if response.status_code != 200:
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': response.status_code,
+        }), response.status_code
+
+    try:
+        rpc_response = response.json()
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': 'Invalid JSON response from Zano RPC',
+        }), 500
+
+    try:
+        result = rpc_response.get('result', {})
+        pi = result.get('pi', {})
+        height = pi.get('curent_height')
+
+        transfers = result.get('transfers', [])
+
+        accumulated = 0
+        found = False
+        txheight = None
+
+        print(f'Height: {height}')
+        print(f'Address: {address}')
+        print(f'Coin: {coin}')
+        print(f'Asset ID: {asset_id}')
+
+        for tx in transfers:
+            tx_comment = tx.get('comment')
+            current_tx_height = tx.get('height', 0)
+
+            if tx_comment != address:
+                continue
+
+            if height is not None:
+                if current_tx_height != 0 and current_tx_height <= height - 10:
+                    continue
+
+            employed_entries = tx.get('employed_entries', {})
+            receive_entries = employed_entries.get('receive', [])
+
+            for receive_entry in receive_entries:
+                receive_asset_id = receive_entry.get('asset_id')
+
+                if receive_asset_id != asset_id:
+                    continue
+
+                raw_amount = receive_entry.get('amount', 0)
+                amount = float(raw_amount) / divisor
+
+                accumulated += amount
+                found = True
+                txheight = current_tx_height
+
+        if found:
+            return jsonify({
+                'result': round(float(accumulated), 8),
+                'height': txheight,
+                'error': None,
+            })
+
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': None,
+        })
+
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': str(e),
+        }), 500
         
 @app.route('/v1/zano/getbalances', methods=['GET'])    
 def get_zano_balances():
