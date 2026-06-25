@@ -34,7 +34,9 @@ from pms.plan_node_subscriptions import PlanSubscribe
 import scrtxxs
 
 
-VERSION=20260604.2244
+VERSION=20260625.1438
+
+GRPC = scrtxxs.GRPC_DEV
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -75,7 +77,7 @@ def __keyring(keyring_passphrase: str):
 
 keyring = __keyring(scrtxxs.HotWalletPW)
 private_key = keyring.get_password("meile-plan", scrtxxs.WalletName)        
-grpcaddr, grpcport = urlparse(scrtxxs.GRPC_DEV).netloc.split(":")
+grpcaddr, grpcport = urlparse(GRPC).netloc.split(":")
 sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=True)
 alloc_private_key = keyring.get_password("meile-plan", scrtxxs.AllocWalletName)
 sdkAlloc = SDKInstance(grpcaddr, int(grpcport), secret=alloc_private_key, ssl=True)
