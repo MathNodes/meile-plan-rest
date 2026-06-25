@@ -43,3 +43,4 @@ FIROHOST          = ""
 PIVXHOST          = ""
 ZANOHOST          = ""
 ZEPHYRHOST        = ""
+PROMO_COINS       = ["firo"]

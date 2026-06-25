@@ -353,7 +353,7 @@ def add_wallet_to_plan():
     now = datetime.now()
     
     bonus_months = 0
-    if denom.lower() == "firo":
+    if denom.lower() in scrtxxs.PROMO_COINS:
         bonus_months = min(duration, 3)
     
     if expiration:
