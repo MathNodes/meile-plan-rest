@@ -351,14 +351,18 @@ def add_wallet_to_plan():
     except:
         pass   
     now = datetime.now()
+    
+    bonus_months = 0
+    if denom.lower() == "firo":
+        bonus_months = min(duration, 3)
+    
     if expiration:
         if now < expiration:
-            expires = expiration + relativedelta(months=+duration)
+            expires = expiration + relativedelta(months=+(duration + bonus_months))
         else:
-            expires = now + relativedelta(months=+duration)
-    
+            expires = now + relativedelta(months=+(duration + bonus_months))
     else:
-        expires = now + relativedelta(months=+duration)
+        expires = now + relativedelta(months=+(duration + bonus_months))
     
     WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log") 
     log_file_descriptor = open(WalletLogFile, "a+")

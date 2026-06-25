@@ -179,8 +179,8 @@ def CheckRenewalStatus(wallet, plan_id):
     results = c.fetchone()
     
     if results:
-        if results[1] and results[2]:
-            return True,results[1],results[2]
+        if results['subscribe_date'] and results['expires']:
+            return True,results['subscribe_date'],results['expires']
         else: 
             return False, None, None          
     else: 
