@@ -201,7 +201,7 @@ def SubToPlan(plan_id: int, wallet: str):
                 denom="udvpn"
                 )
     
-    
+    sdk._client.load_account_data(account=sdk._account)
     tx = sdk.subscriptions.StartSubscription(plan_id=plan_id,
                                             denom="udvpn", 
                                             renewal = RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL, 
@@ -243,7 +243,7 @@ def ShareSubTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
                 fee_amount=31415,
                 denom="udvpn"
                 )
-    
+    sdk._client.load_account_data(account=sdk._account)
     tx = sdk.subscriptions.ShareSubscription(subscription_id=sub_id,
                                              wallet_address=wallet, 
                                              bytes=str(size), 
