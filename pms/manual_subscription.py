@@ -7,6 +7,8 @@ import json
 import pymysql
 from urllib.parse import urlparse
 
+from time import sleep
+
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
@@ -277,9 +279,9 @@ def manual_sub(uuid, plan_id, wallet, amt_paid, denom, duration):
         log_file_descriptor.write("ERROR ADDING WALLET TO SUBSCRIPTION DATABASE" + '\n')
         
     query = '''
-            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration)
+            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration, user)
             VALUES("%s", %d, %.8f, "%s", "%s", %d)
-            ''' % (wallet, plan_id, amt_paid, denom, str(now), duration)     
+            ''' % (wallet, int(plan_id), float(amt_paid), denom, str(now), duration, "mathnodes")     
             
     print("Updating Itemized Subscription Table...")
     print(query)

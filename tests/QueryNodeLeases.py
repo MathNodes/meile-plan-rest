@@ -24,7 +24,8 @@ class Leases():
     def QueryLeases(self):
         
         leases = self.sdk.lease.QueryProviderLeases(address=PROVIDER)
-        print(leases)
+        for l in leases:
+            print(l.node_address)
         
         
 if __name__ == "__main__":
