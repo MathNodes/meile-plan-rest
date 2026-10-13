@@ -33,6 +33,9 @@ from pms.plan_node_subscriptions import PlanSubscribe
 
 import scrtxxs
 
+import pymysql
+import pymysql.cursors
+
 
 VERSION=20260625.1438
 
@@ -1369,6 +1372,364 @@ def get_zephyr_all_balances():
         
 def UpdateMeileSubscriberDB():
     pass
+
+
+'''
+================================================================================
+Meile SMS (SMSPool) balance endpoints
+================================================================================
+The Meile GUI keeps a small USD "SMS balance" per app install. The install is
+identified by the anonymous UUID that is generated locally on first run
+(see PreLoadWindow.GenerateUUID in meile-gui/src/ui/screens.py).
+
+All of the SMS data lives in a dedicated MySQL database (`sms`) with three
+tables (see schema/sms_balances.sql, schema/sms_transactions.sql and
+schema/sms_orders.sql):
+
+    balances     -> one row per UUID, holds the current USD balance
+    transactions -> signed ledger of every credit/debit
+    orders       -> each SMS number that was purchased (for status/refunds)
+
+The markup applied on top of the SMSPool cost when a number is bought is
+defined by SMS_MARKUP_PERCENT below. Change it in one place and the GUI picks
+it up automatically because it is returned by the balance endpoints.
+'''
+
+SMS_DB = 'sms'
+
+# Percentage added on top of the raw SMSPool cost when a user buys a number.
+# e.g. a $0.20 number costs the user $0.20 * (1 + 5/100) = $0.21
+SMS_MARKUP_PERCENT = 5.0
+
+
+def GetSmsDB():
+    '''Open a connection to the dedicated `sms` MySQL database.
+
+    A separate pymysql connection (rather than the flaskext `mysql` object) is
+    used so the SMS data can live in its own database while still sharing the
+    same MySQL credentials.
+    '''
+    return pymysql.connect(
+        host=scrtxxs.MySQLHost,
+        port=int(scrtxxs.MySQLPort),
+        user=scrtxxs.MySQLUsername,
+        password=scrtxxs.MySQLPassword,
+        database=SMS_DB,
+        autocommit=False,
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+def _sms_locked_balance(cursor, uuid):
+    '''Return the current balance for uuid, creating a zero row if needed.
+
+    The row is locked (SELECT ... FOR UPDATE) so concurrent top-ups/purchases
+    for the same UUID cannot race.  Must be called inside an open transaction.
+    '''
+    cursor.execute("SELECT balance FROM balances WHERE uuid = %s FOR UPDATE", (uuid,))
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT INTO balances (uuid, balance) VALUES (%s, 0)", (uuid,))
+        return 0.0
+    return float(row['balance'])
+
+
+@app.route('/v1/sms/balance/<uuid>', methods=['GET'])
+@auth.login_required
+def get_sms_balance(uuid):
+    '''Return the SMS balance for a UUID.
+
+    Responds with HTTP 404 when no row exists so the GUI knows it has to call
+    /v1/sms/account to create one (first-time user).
+    '''
+    conn = GetSmsDB()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT uuid, balance FROM balances WHERE uuid = %s", (uuid,))
+            row = c.fetchone()
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Database error: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    if not row:
+        return jsonify({
+            'status': False,
+            'message': 'No balance found for UUID',
+            'uuid': uuid,
+            'balance': None,
+            'markup': SMS_MARKUP_PERCENT,
+        }), 404
+
+    return jsonify({
+        'status': True,
+        'uuid': row['uuid'],
+        'balance': float(row['balance']),
+        'markup': SMS_MARKUP_PERCENT,
+    })
+
+
+@app.route('/v1/sms/account', methods=['POST'])
+@auth.login_required
+def create_sms_account():
+    '''Create a zero balance row for a UUID (idempotent) and return it.
+
+    Called by the GUI the first time a user opens the SMS screen. If the UUID
+    already has a balance the existing row is returned untouched.
+    '''
+    try:
+        JSON = request.json
+        uuid = JSON['uuid']
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'uuid is required'}), 400
+
+    conn = GetSmsDB()
+    try:
+        conn.begin()
+        with conn.cursor() as c:
+            c.execute(
+                "INSERT INTO balances (uuid, balance) VALUES (%s, 0) "
+                "ON DUPLICATE KEY UPDATE uuid = uuid",
+                (uuid,))
+            c.execute("SELECT uuid, balance FROM balances WHERE uuid = %s", (uuid,))
+            row = c.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Database error: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    return jsonify({
+        'status': True,
+        'uuid': row['uuid'],
+        'balance': float(row['balance']),
+        'markup': SMS_MARKUP_PERCENT,
+    })
+
+
+@app.route('/v1/sms/topup', methods=['POST'])
+@auth.login_required
+def sms_topup():
+    '''Credit a user's SMS balance after a coin payment was received.
+
+    Expected JSON:
+        { "uuid": ..., "amount": 10.0, "denom": "USD",
+          "coin": "arrr", "address": "...", "txid": "..." }
+    '''
+    try:
+        JSON = request.json
+        uuid = JSON['uuid']
+        amount = float(JSON['amount'])
+        denom = JSON.get('denom', 'USD')
+        coin = JSON.get('coin')
+        address = JSON.get('address')
+        txid = JSON.get('txid')
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Invalid top-up request: %s' % str(e)}), 400
+
+    if amount <= 0:
+        return jsonify({'status': False, 'message': 'Top-up amount must be greater than zero'}), 400
+
+    conn = GetSmsDB()
+    try:
+        conn.begin()
+        with conn.cursor() as c:
+            old_balance = _sms_locked_balance(c, uuid)
+            new_balance = round(old_balance + amount, 6)
+            c.execute("UPDATE balances SET balance = %s WHERE uuid = %s", (new_balance, uuid))
+            c.execute(
+                "INSERT INTO transactions "
+                "(uuid, type, amount, balance_after, denom, coin, address, txid, status) "
+                "VALUES (%s, 'topup', %s, %s, %s, %s, %s, %s, 'complete')",
+                (uuid, amount, new_balance, denom, coin, address, txid))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Top-up failed: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    print(f"SMS top-up: uuid={uuid} amount={amount} {denom} coin={coin} -> balance={new_balance}")
+    return jsonify({
+        'status': True,
+        'uuid': uuid,
+        'balance': new_balance,
+        'amount': amount,
+        'markup': SMS_MARKUP_PERCENT,
+    })
+
+
+@app.route('/v1/sms/purchase', methods=['POST'])
+@auth.login_required
+def sms_purchase():
+    '''Debit the cost of a purchased SMS number (+ markup) from a user's balance.
+
+    Expected JSON:
+        { "uuid": ..., "order_id": "...", "country_id": 1, "country": "United States",
+          "service_id": 1, "service": "Telegram", "phone": "15551234",
+          "cost": 0.20, "expires_at": 1700000000 }
+
+    The amount charged is cost * (1 + SMS_MARKUP_PERCENT/100).  If the balance
+    is not sufficient nothing is written and status=False (with code
+    'insufficient_funds') is returned.
+    '''
+    try:
+        JSON = request.json
+        uuid = JSON['uuid']
+        order_id = str(JSON.get('order_id') or JSON.get('provider_order_id') or '')
+        country_id = JSON.get('country_id')
+        country = JSON.get('country')
+        service_id = JSON.get('service_id')
+        service = JSON.get('service')
+        phone = JSON.get('phone')
+        cost = float(JSON['cost'])
+        expires_at = JSON.get('expires_at')
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Invalid purchase request: %s' % str(e)}), 400
+
+    markup = SMS_MARKUP_PERCENT
+    total = round(cost * (1.0 + markup / 100.0), 6)
+
+    conn = GetSmsDB()
+    try:
+        conn.begin()
+        with conn.cursor() as c:
+            old_balance = _sms_locked_balance(c, uuid)
+            if old_balance < total:
+                conn.rollback()
+                return jsonify({
+                    'status': False,
+                    'code': 'insufficient_funds',
+                    'message': 'Insufficient SMS balance',
+                    'uuid': uuid,
+                    'balance': old_balance,
+                    'required': total,
+                    'markup': markup,
+                }), 402
+
+            new_balance = round(old_balance - total, 6)
+            c.execute("UPDATE balances SET balance = %s WHERE uuid = %s", (new_balance, uuid))
+            c.execute(
+                "INSERT INTO orders "
+                "(uuid, provider_order_id, country_id, country, service_id, service, "
+                " phone_number, cost, markup, total_charged, status, expires_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', "
+                " FROM_UNIXTIME(%s))",
+                (uuid, order_id, country_id, country, service_id, service,
+                 phone, cost, markup, total, expires_at if expires_at else None))
+            c.execute(
+                "INSERT INTO transactions "
+                "(uuid, type, amount, balance_after, denom, reference, status) "
+                "VALUES (%s, 'purchase', %s, %s, 'USD', %s, 'complete')",
+                (uuid, -total, new_balance, order_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Purchase failed: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    print(f"SMS purchase: uuid={uuid} order={order_id} cost={cost} charged={total} -> balance={new_balance}")
+    return jsonify({
+        'status': True,
+        'uuid': uuid,
+        'balance': new_balance,
+        'cost': cost,
+        'markup': markup,
+        'charged': total,
+        'order_id': order_id,
+    })
+
+
+@app.route('/v1/sms/refund', methods=['POST'])
+@auth.login_required
+def sms_refund():
+    '''Refund a purchased SMS number back to a user's balance.
+
+    Expected JSON:
+        { "uuid": ..., "order_id": "...", "amount": 0.21 }
+
+    `amount` is optional; when omitted the stored total_charged for the order is
+    used. An order can only be refunded once.
+    '''
+    try:
+        JSON = request.json
+        uuid = JSON['uuid']
+        order_id = str(JSON.get('order_id') or JSON.get('provider_order_id') or '')
+        amount = JSON.get('amount')
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Invalid refund request: %s' % str(e)}), 400
+
+    conn = GetSmsDB()
+    try:
+        conn.begin()
+        with conn.cursor() as c:
+            # Look the order up so we never refund twice and can fall back to
+            # the stored total when no explicit amount is supplied.
+            c.execute(
+                "SELECT id, total_charged, status FROM orders "
+                "WHERE uuid = %s AND provider_order_id = %s ORDER BY id DESC LIMIT 1 FOR UPDATE",
+                (uuid, order_id))
+            order = c.fetchone()
+
+            if order and order['status'] == 'refunded':
+                conn.rollback()
+                return jsonify({
+                    'status': False,
+                    'code': 'already_refunded',
+                    'message': 'Order was already refunded',
+                    'uuid': uuid,
+                }), 409
+
+            if amount is None:
+                if not order or order['total_charged'] is None:
+                    conn.rollback()
+                    return jsonify({
+                        'status': False,
+                        'message': 'No order found to refund and no amount supplied',
+                        'uuid': uuid,
+                    }), 404
+                amount = float(order['total_charged'])
+            else:
+                amount = float(amount)
+
+            old_balance = _sms_locked_balance(c, uuid)
+            new_balance = round(old_balance + amount, 6)
+            c.execute("UPDATE balances SET balance = %s WHERE uuid = %s", (new_balance, uuid))
+            c.execute(
+                "UPDATE orders SET status = 'refunded', cancelled_at = NOW() "
+                "WHERE uuid = %s AND provider_order_id = %s",
+                (uuid, order_id))
+            c.execute(
+                "INSERT INTO transactions "
+                "(uuid, type, amount, balance_after, denom, reference, status) "
+                "VALUES (%s, 'refund', %s, %s, 'USD', %s, 'complete')",
+                (uuid, amount, new_balance, order_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Refund failed: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    print(f"SMS refund: uuid={uuid} order={order_id} amount={amount} -> balance={new_balance}")
+    return jsonify({
+        'status': True,
+        'uuid': uuid,
+        'balance': new_balance,
+        'amount': amount,
+        'order_id': order_id,
+    })
 
 
 db.create_all()
