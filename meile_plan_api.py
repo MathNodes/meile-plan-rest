@@ -623,32 +623,38 @@ def get_pirate_balance():
     
     
     
-@app.route('/v1/pirate/getbalances', methods=['GET'])    
+@app.route('/v1/pirate/getbalances', methods=['GET'])
 def get_pirate_balances():
-    
+
     url = scrtxxs.PIRATEHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
-        "id":"meile", 
-        "method": "z_getbalances", 
-        "params": [True] 
+        "id": "meile",
+        "method": "z_getbalances",
+        "params": [True]
     }
-    
+
     response = requests.post(
         url,
         json=data,
         headers=headers,
         auth=RequestsAuth(scrtxxs.PIRATEUSER, scrtxxs.PIRATEPASSWORD)
     )
-    
+
     print(response.status_code)
     if response.status_code == 200:
-        print(f"response: {response.json()}")
-        return jsonify(response.json())
+        payload = response.json()
+        print(f"response: {payload}")
+
+        balances = payload.get('result') or []
+        payload['result'] = [
+            entry for entry in balances
+            if float(entry.get('balance', 0)) != 0
+        ]
+        return jsonify(payload)
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
-    
 
 @app.route('/v1/firo/newsparkaddress', methods=['GET'])
 @auth.login_required
