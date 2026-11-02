@@ -7,6 +7,8 @@ import json
 import pymysql
 from urllib.parse import urlparse
 
+from time import sleep
+
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
@@ -33,7 +35,7 @@ def __keyring(keyring_passphrase: str):
 
 keyring = __keyring(scrtxxs.HotWalletPW)
 private_key = keyring.get_password("meile-plan", scrtxxs.WalletName)        
-grpcaddr, grpcport = urlparse(scrtxxs.GRPC_DEV).netloc.split(":")
+grpcaddr, grpcport = urlparse(scrtxxs.GRPC_BLUEFREN).netloc.split(":")
 sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=True)
 db = pymysql.connect(host=scrtxxs.MySQLHost,
                          port=scrtxxs.MySQLPort,
@@ -105,7 +107,7 @@ def ShareSubTX(sub_id: int, wallet, size=scrtxxs.BYTES_50):
                 fee_amount=31415,
                 denom="udvpn"
                 )
-    
+    sdk._client.load_account_data(account=sdk._account)
     tx = sdk.subscriptions.ShareSubscription(subscription_id=sub_id,
                                              wallet_address=wallet, 
                                              bytes=str(size), 
@@ -179,8 +181,8 @@ def CheckRenewalStatus(wallet, plan_id):
     results = c.fetchone()
     
     if results:
-        if results[1] and results[2]:
-            return True,results[1],results[2]
+        if results['subscribe_date'] and results['expires']:
+            return True,results['subscribe_date'],results['expires']
         else: 
             return False, None, None          
     else: 
@@ -188,6 +190,8 @@ def CheckRenewalStatus(wallet, plan_id):
         
         
 def manual_sub(uuid, plan_id, wallet, amt_paid, denom, duration):
+    
+    
     
     WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log") 
     log_file_descriptor = open(WalletLogFile, "a+")
@@ -220,6 +224,8 @@ def manual_sub(uuid, plan_id, wallet, amt_paid, denom, duration):
     
     else:
         sub_id = int(sub_result['sub_id'])
+        
+    sleep(4)
     
     result = ShareSubTX(sub_id, wallet)
     
@@ -273,9 +279,9 @@ def manual_sub(uuid, plan_id, wallet, amt_paid, denom, duration):
         log_file_descriptor.write("ERROR ADDING WALLET TO SUBSCRIPTION DATABASE" + '\n')
         
     query = '''
-            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration)
+            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration, user)
             VALUES("%s", %d, %.8f, "%s", "%s", %d)
-            ''' % (wallet, plan_id, amt_paid, denom, str(now), duration)     
+            ''' % (wallet, int(plan_id), float(amt_paid), denom, str(now), duration, "mathnodes")     
             
     print("Updating Itemized Subscription Table...")
     print(query)
@@ -285,7 +291,9 @@ def manual_sub(uuid, plan_id, wallet, amt_paid, denom, duration):
     except Exception as e:
         print(str(e))
         log_file_descriptor.write("ERROR ADDING WALLET TO ITEMIZED SUBSCRIPTION DATABASE" + '\n')
-        
+    
+    
+    sleep(4)    
     result = FeeGrant(wallet)
     
     if result['status']:    

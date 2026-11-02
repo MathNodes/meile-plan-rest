@@ -2,11 +2,16 @@ import os
 import jwt
 import time
 import pexpect
+import fcntl
+import secrets
+import threading
+from contextlib import contextmanager
 from urllib.parse import urlparse
 from os import path
 import json
 import requests
 from requests.auth import HTTPBasicAuth as RequestsAuth
+from requests.auth import HTTPDigestAuth
 
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -32,8 +37,13 @@ from pms.plan_node_subscriptions import PlanSubscribe
 
 import scrtxxs
 
+import pymysql
+import pymysql.cursors
 
-VERSION=20260204.0138
+
+VERSION=20261101.1942
+
+GRPC = scrtxxs.GRPC_DEV
 
 app = Flask(__name__)
 mysql = MySQL()
@@ -74,7 +84,7 @@ def __keyring(keyring_passphrase: str):
 
 keyring = __keyring(scrtxxs.HotWalletPW)
 private_key = keyring.get_password("meile-plan", scrtxxs.WalletName)        
-grpcaddr, grpcport = urlparse(scrtxxs.GRPC_DEV).netloc.split(":")
+grpcaddr, grpcport = urlparse(GRPC).netloc.split(":")
 sdk = SDKInstance(grpcaddr, int(grpcport), secret=private_key, ssl=True)
 alloc_private_key = keyring.get_password("meile-plan", scrtxxs.AllocWalletName)
 sdkAlloc = SDKInstance(grpcaddr, int(grpcport), secret=alloc_private_key, ssl=True)
@@ -177,7 +187,7 @@ def CheckRenewalStatus(wallet, plan_id):
     c.execute(query)
     
     results = c.fetchone()
-    
+    print(results)
     if results:
         if results[1] and results[2]:
             return True,results[1],results[2]
@@ -198,7 +208,7 @@ def SubToPlan(plan_id: int, wallet: str):
                 denom="udvpn"
                 )
     
-    
+    sdk._client.load_account_data(account=sdk._account)
     tx = sdk.subscriptions.StartSubscription(plan_id=plan_id,
                                             denom="udvpn", 
                                             renewal = RenewalPricePolicy.RENEWAL_PRICE_POLICY_IF_LESSER_OR_EQUAL, 
@@ -240,7 +250,7 @@ def ShareSubTX(sdk, sub_id: int, wallet, size=scrtxxs.BYTES):
                 fee_amount=31415,
                 denom="udvpn"
                 )
-    
+    sdk._client.load_account_data(account=sdk._account)
     tx = sdk.subscriptions.ShareSubscription(subscription_id=sub_id,
                                              wallet_address=wallet, 
                                              bytes=str(size), 
@@ -282,7 +292,7 @@ def FeeGrant(wallet):
         tx_type='transfer',
         sender=sdk._account,
         recipient=wallet,
-        amount=1000000,
+        amount=4000000,
         denom="udvpn",
     )
     
@@ -344,17 +354,24 @@ def add_wallet_to_plan():
         return jsonify(PlanTX)
     
     renewal,subscription_date, expiration = CheckRenewalStatus(wallet, plan_id)
-    
-    print(f"renewal: {renewal}, sub date: {subscription_date}")
+    print(f"renewal: {renewal}, sub date: {subscription_date}") 
+    try:
+        print(f"User: {g.user.username}")
+    except:
+        pass   
     now = datetime.now()
+    
+    bonus_months = 0
+    if denom.lower() in scrtxxs.PROMO_COINS:
+        bonus_months = min(duration, 3)
+    
     if expiration:
         if now < expiration:
-            expires = expiration + relativedelta(months=+duration)
+            expires = expiration + relativedelta(months=+(duration + bonus_months))
         else:
-            expires = now + relativedelta(months=+duration)
-    
+            expires = now + relativedelta(months=+(duration + bonus_months))
     else:
-        expires = now + relativedelta(months=+duration)
+        expires = now + relativedelta(months=+(duration + bonus_months))
     
     WalletLogFile = os.path.join(WalletLogDIR, "meile_plan.log") 
     log_file_descriptor = open(WalletLogFile, "a+")
@@ -427,9 +444,9 @@ def add_wallet_to_plan():
         log_file_descriptor.write("ERROR ADDING WALLET TO SUBSCRIPTION DATABASE" + '\n')
         
     query = '''
-            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration)
-            VALUES("%s", %d, %.8f, "%s", "%s", %d)
-            ''' % (wallet, plan_id, amt_paid, denom, str(now), duration)     
+            INSERT INTO itemized_subscriptions (wallet, plan_id, amt_paid, amt_denom, subscribe_date, subscription_duration, user)
+            VALUES("%s", %d, %.8f, "%s", "%s", %d, "%s")
+            ''' % (wallet, plan_id, amt_paid, denom, str(now), duration, g.user.username)     
             
     print("Updating Itemized Subscription Table...")
     print(query)
@@ -610,32 +627,38 @@ def get_pirate_balance():
     
     
     
-@app.route('/v1/pirate/getbalances', methods=['GET'])    
+@app.route('/v1/pirate/getbalances', methods=['GET'])
 def get_pirate_balances():
-    
+
     url = scrtxxs.PIRATEHOST
     headers = {'content-type': 'text/plain;'}
     data = {
         "jsonrpc": "1.0",
-        "id":"meile", 
-        "method": "z_getbalances", 
-        "params": [True] 
+        "id": "meile",
+        "method": "z_getbalances",
+        "params": [True]
     }
-    
+
     response = requests.post(
         url,
         json=data,
         headers=headers,
         auth=RequestsAuth(scrtxxs.PIRATEUSER, scrtxxs.PIRATEPASSWORD)
     )
-    
+
     print(response.status_code)
     if response.status_code == 200:
-        print(f"response: {response.json()}")
-        return jsonify(response.json())
+        payload = response.json()
+        print(f"response: {payload}")
+
+        balances = payload.get('result') or []
+        payload['result'] = [
+            entry for entry in balances
+            if float(entry.get('balance', 0)) != 0
+        ]
+        return jsonify(payload)
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
-    
 
 @app.route('/v1/firo/newsparkaddress', methods=['GET'])
 @auth.login_required
@@ -733,7 +756,7 @@ def get_spark_txs():
         try:
             rpc_response = response.json()
             transactions = rpc_response.get("result", [])
-
+            print(transactions[-1])
             # Search for a transaction with matching amount
             for tx in transactions:
                 tx_amount = tx.get("amount", 0)
@@ -770,7 +793,6 @@ def get_spark_txs():
             "error": f"RPC request failed with status {response.status_code}"
         }), 502
 
-    
 
 @app.route('/v1/firo/getsparkwalletbalance', methods=['GET'])
 def get_spark_wallet_balance():
@@ -885,16 +907,30 @@ def get_pivx_balances():
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
     
-
+'''
 @app.route('/v1/zano/gettxs', methods=['POST'])
 @auth.login_required    
 def get_zano_txs():
     SATOSHI = 1000000000000
     SATOSHI_FUSD = 10000
+    SATOSHI_BNB = 1000000
+    SATOSHI_BCH = 100000000
+    SATOSHI_BTC = SATOSHI_BCH
+    SATOSHI_DAI = SATOSHI_BNB
+    SATOSHI_ETH = SATOSHI_BNB
+    SATOSHI_SOL = SATOSHI_BNB
+    SATOSHI_TON = SATOSHI_BNB
     accumulated = 0
     FOUND = False
     ASSET_IDS = {'zano' : 'd6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a',
-                 'fusd' : '86143388bd056a8f0bab669f78f14873fac8e2dd8d57898cdb725a2d5e2e4f8f'}
+                 'fusd' : '86143388bd056a8f0bab669f78f14873fac8e2dd8d57898cdb725a2d5e2e4f8f',
+                 'bchx' : '3de9ad7243afa49e0ade6839e97a9f10a527c4958ece2fc9cb1b87a44032167d',
+                 'bnbx' : '6ca3fa07f1b6a75b6e195d2918c32228765968b54ea691c75958affa1c4073fb',
+                 'btcx' : '040a180aca4194a158c17945dd115db42086f6f074c1f77838621a4927fffa91',
+                 'daix' : '24819c4b65786c3ac424e05d9ef4ab212de6222cc73bc5c4b012df5a3107eea4',
+                 'ethx' : '93da681503353509367e241cda3234299dedbbad9ec851de31e900490807bf0c',
+                 'solx' : '65b3bc549c8bc2c773781d5436f25f7af84644e61baaabd675d9867b007d17b4',
+                 'tonx' : 'bfa6609a94e39f418d9adb000f89edc7bd180fd120f1cd272201220e3070fb4f'}
     
     try:
         JSON      = request.json
@@ -915,7 +951,7 @@ def get_zano_txs():
           "params": {
             "count": 10,
             "exclude_mining_txs": False,
-            "exclu    de_unconfirmed": False,
+            "exclude_unconfirmed": False,
             "offset": 0,
             "order": "FROM_END_TO_BEGIN",
             "update_provision_info": True
@@ -951,7 +987,7 @@ def get_zano_txs():
                     accumulated += float(tx['employed_entries']['receive'][0]['amount']) / SATOSHI
                 
         if FOUND:
-            return jsonify({'result' : round(float(accumulated),4),
+            return jsonify({'result' : round(float(accumulated),8),
                             'height' : txheight,
                             'error' : None})
         else:
@@ -962,6 +998,439 @@ def get_zano_txs():
         return jsonify({'result': 0.0, 
                         'error': response.status_code,  
                         'height' : None})
+'''
+    
+# Zano only accepts an 8 byte payment id, which a Meile wallet address is too
+# long to be, so a random 8 byte id is issued per wallet address.  The ids are
+# held in a lookup table in the working directory, keyed by the wallet address,
+# so that /v1/zano/getaddress and /v1/zano/gettxs agree on the value.
+ZANO_LOOKUP_FILENAME = 'zano_lookup.json'
+
+zano_lookup_lock = threading.Lock()
+
+
+def zano_lookup_path():
+    '''Path of the Zano payment id lookup table (working directory).'''
+    return path.join(os.getcwd(), ZANO_LOOKUP_FILENAME)
+
+
+@contextmanager
+def zano_lookup_write_lock():
+    '''
+    Exclusive lock for a read-modify-write of the payment id lookup table.
+
+    run-meile-rest.sh starts the API with 6 uWSGI processes, so a threading
+    lock is not enough on its own: two processes could load, change and save
+    the table at the same moment and one of the two mappings would be lost -
+    the next call would then hand out a different payment id for an address
+    that already had one.  The lock file next to the table makes the sequence
+    exclusive across processes as well as threads.
+    '''
+    with zano_lookup_lock:
+        lock_file = None
+
+        try:
+            lock_file = open(f'{zano_lookup_path()}.lock', 'a')
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        except Exception as e:
+            # This is only a lock, so keep going rather than failing the call
+            print(str(e))
+
+        try:
+            yield
+        finally:
+            if lock_file is not None:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+                lock_file.close()
+
+
+def load_zano_lookup():
+    '''Return the wallet address -> payment id table, empty when absent.'''
+    try:
+        with open(zano_lookup_path(), 'r') as lookup_file:
+            lookup = json.load(lookup_file)
+
+        if isinstance(lookup, dict):
+            return lookup
+
+        print('Zano lookup table is not a JSON object, starting a new one')
+
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(str(e))
+
+    return {}
+
+
+def save_zano_lookup(lookup):
+    '''Write the lookup table, replacing the file in a single step.'''
+    lookup_path = zano_lookup_path()
+    temp_path = f'{lookup_path}.tmp'
+
+    with open(temp_path, 'w') as lookup_file:
+        json.dump(lookup, lookup_file, indent=4, sort_keys=True)
+
+    os.replace(temp_path, lookup_path)
+
+
+def get_zano_payment_id(address):
+    '''Payment id already issued for address, or None when there is none.'''
+    return load_zano_lookup().get(address)
+
+
+def get_or_create_zano_payment_id(address):
+    '''
+    Return the 8 byte hex payment id issued for a Meile wallet address.
+
+    secrets.token_hex(8) gives the 16 hex characters (8 bytes) Zano wants.  An
+    address is only ever given one id, and it is stored in zano_lookup.json so
+    that later calls - and /v1/zano/gettxs - see the same value.
+    '''
+    with zano_lookup_write_lock():
+        lookup = load_zano_lookup()
+
+        payment_id = lookup.get(address)
+
+        if payment_id:
+            return payment_id
+
+        payment_id = secrets.token_hex(8)
+
+        while payment_id in lookup.values():
+            payment_id = secrets.token_hex(8)
+
+        lookup[address] = payment_id
+        save_zano_lookup(lookup)
+
+        print(f'Zano payment id for {address}: {payment_id}')
+
+        return payment_id
+
+
+def normalize_zano_payment_id(payment_id):
+    '''
+    Normalise a payment id so that two of them can be compared byte for byte.
+
+    Zano echoes payment ids as lower case hex, and a wallet may leave off a 0x
+    prefix or leading zeros, so both sides of the comparison are put in the
+    same shape first.
+    '''
+    if not payment_id:
+        return ''
+
+    return str(payment_id).lower().replace('0x', '').lstrip('0')
+
+
+@app.route('/v1/zano/getaddress', methods=['POST'])
+@auth.login_required
+def get_zano_address():
+    '''
+    Build a Zano integrated address (standard wallet address + payment id)
+    for the caller supplied Meile wallet address.
+
+    Zano requires the payment id to be 8 bytes of hex, so the Meile wallet
+    address is mapped to a random 8 byte id kept in zano_lookup.json and that
+    id is what goes into the integrated address.  An incoming payment carries
+    it back as the transaction payment_id, which is what /v1/zano/gettxs
+    matches on.
+    '''
+    try:
+        body = request.get_json(force=True)
+
+        address = body.get('address')
+
+        if not address:
+            return jsonify({
+                'result': None,
+                'error': 'Missing address',
+            }), 400
+
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': None,
+            'error': 'Invalid JSON request',
+        }), 400
+
+    try:
+        payment_id = get_or_create_zano_payment_id(address)
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': None,
+            'error': f'Could not store payment id: {e}',
+        }), 500
+
+    url = scrtxxs.ZANOHOST
+
+    headers = {
+        'Content-Type': 'application/json',
+    }
+
+    data = {
+        'id': 0,
+        'jsonrpc': '2.0',
+        'method': 'make_integrated_address',
+        'params': {
+            'payment_id': payment_id,
+        },
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=data,
+            headers=headers,
+            timeout=20,
+        )
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': None,
+            'error': str(e),
+        }), 500
+
+    if response.status_code != 200:
+        return jsonify({
+            'result': None,
+            'error': response.status_code,
+        }), response.status_code
+
+    try:
+        rpc_response = response.json()
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': None,
+            'error': 'Invalid JSON response from Zano RPC',
+        }), 500
+
+    result = rpc_response.get('result', {}) or {}
+    integrated_address = result.get('integrated_address')
+
+    print(f'Address: {address}')
+    print(f'Payment ID: {payment_id}')
+    print(f'Integrated Address: {integrated_address}')
+
+    if not integrated_address:
+        return jsonify({
+            'result': None,
+            'error': rpc_response.get('error', 'Missing integrated address'),
+        }), 500
+
+    return jsonify({
+        'result': integrated_address,
+        'payment_id': result.get('payment_id', payment_id),
+    })
+
+
+@app.route('/v1/zano/gettxs', methods=['POST'])
+@auth.login_required
+def get_zano_txs():
+    '''
+    Total received for a Meile wallet address, in the requested asset.
+
+    The address is resolved to the 8 byte payment id that
+    /v1/zano/getaddress issued for it, and incoming transactions are matched
+    on their payment_id, because that is what the integrated address carries.
+    '''
+    ASSETS = {
+        'zano': {
+            'asset_id': 'd6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a',
+            'divisor': 10 ** 12,
+        },
+        'fusd': {
+            'asset_id': '86143388bd056a8f0bab669f78f14873fac8e2dd8d57898cdb725a2d5e2e4f8f',
+            'divisor': 10 ** 4,
+        },
+        'bchx': {
+            'asset_id': '3de9ad7243afa49e0ade6839e97a9f10a527c4958ece2fc9cb1b87a44032167d',
+            'divisor': 10 ** 8,
+        },
+        'bnbx': {
+            'asset_id': '6ca3fa07f1b6a75b6e195d2918c32228765968b54ea691c75958affa1c4073fb',
+            'divisor': 10 ** 6,
+        },
+        'btcx': {
+            'asset_id': '040a180aca4194a158c17945dd115db42086f6f074c1f77838621a4927fffa91',
+            'divisor': 10 ** 8,
+        },
+        'daix': {
+            'asset_id': '24819c4b65786c3ac424e05d9ef4ab212de6222cc73bc5c4b012df5a3107eea4',
+            'divisor': 10 ** 6,
+        },
+        'ethx': {
+            'asset_id': '93da681503353509367e241cda3234299dedbbad9ec851de31e900490807bf0c',
+            'divisor': 10 ** 6,
+        },
+        'solx': {
+            'asset_id': '65b3bc549c8bc2c773781d5436f25f7af84644e61baaabd675d9867b007d17b4',
+            'divisor': 10 ** 6,
+        },
+        'tonx': {
+            'asset_id': 'bfa6609a94e39f418d9adb000f89edc7bd180fd120f1cd272201220e3070fb4f',
+            'divisor': 10 ** 6,
+        },
+    }
+
+    try:
+        body = request.get_json(force=True)
+
+        address = body.get('address')
+        coin = body.get('coin', '').lower()
+
+        if not address:
+            return jsonify({
+                'result': 0.0,
+                'height': None,
+                'error': 'Missing address',
+            }), 400
+
+        if coin not in ASSETS:
+            return jsonify({
+                'result': 0.0,
+                'height': None,
+                'error': f'Unsupported coin: {coin}',
+            }), 400
+
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': 'Invalid JSON request',
+        }), 400
+
+    asset_id = ASSETS[coin]['asset_id']
+    divisor = ASSETS[coin]['divisor']
+
+    expected_payment_id = normalize_zano_payment_id(get_zano_payment_id(address))
+
+    if not expected_payment_id:
+        print(f'No Zano payment id has been issued for {address} yet')
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': None,
+        })
+
+    url = scrtxxs.ZANOHOST
+
+    headers = {
+        'Content-Type': 'application/json',
+    }
+
+    data = {
+        'id': 0,
+        'jsonrpc': '2.0',
+        'method': 'get_recent_txs_and_info',
+        'params': {
+            'count': 10,
+            'exclude_mining_txs': False,
+            'exclude_unconfirmed': False,
+            'offset': 0,
+            'order': 'FROM_END_TO_BEGIN',
+            'update_provision_info': True,
+        },
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=data,
+            headers=headers,
+            timeout=20,
+        )
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': str(e),
+        }), 500
+
+    if response.status_code != 200:
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': response.status_code,
+        }), response.status_code
+
+    try:
+        rpc_response = response.json()
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': 'Invalid JSON response from Zano RPC',
+        }), 500
+
+    try:
+        result = rpc_response.get('result', {})
+        pi = result.get('pi', {})
+        height = pi.get('curent_height')
+
+        transfers = result.get('transfers', [])
+
+        accumulated = 0
+        found = False
+        txheight = None
+
+        print(f'Height: {height}')
+        print(f'Address: {address}')
+        print(f'Payment ID: {expected_payment_id}')
+        print(f'Coin: {coin}')
+        print(f'Asset ID: {asset_id}')
+
+        for tx in transfers:
+            tx_payment_id = normalize_zano_payment_id(tx.get('payment_id'))
+            current_tx_height = tx.get('height', 0)
+
+            if tx_payment_id != expected_payment_id:
+                continue
+
+            if height is not None:
+                if current_tx_height != 0 and current_tx_height <= height - 10:
+                    continue
+
+            employed_entries = tx.get('employed_entries', {})
+            receive_entries = employed_entries.get('receive', [])
+
+            for receive_entry in receive_entries:
+                receive_asset_id = receive_entry.get('asset_id')
+
+                if receive_asset_id != asset_id:
+                    continue
+
+                raw_amount = receive_entry.get('amount', 0)
+                amount = float(raw_amount) / divisor
+
+                accumulated += amount
+                found = True
+                txheight = current_tx_height
+
+        if found:
+            return jsonify({
+                'result': round(float(accumulated), 8),
+                'height': txheight,
+                'error': None,
+            })
+
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': None,
+        })
+
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': str(e),
+        }), 500
         
 @app.route('/v1/zano/getbalances', methods=['GET'])    
 def get_zano_balances():
@@ -986,12 +1455,12 @@ def get_zano_balances():
         return jsonify(response.json())
     else:
         return jsonify({'result': 0.0, 'error': response.status_code, 'id': 'meile'})
-    
-@app.route('/v1/zeph/newaddress', methods=['GET'])
+
+@app.route('/v1/zephyr/newaddress', methods=['GET'])
 @auth.login_required
 def get_new_zeph_address():
     url = scrtxxs.ZEPHYRHOST
-    headers = {'content-type': 'text/plain;'}
+    headers = {'content-type': 'application/json'}
     data = {
             "jsonrpc": "2.0",
             "id": "0",
@@ -1006,14 +1475,12 @@ def get_new_zeph_address():
         url,
         json=data,
         headers=headers,
-        auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+        auth=HTTPDigestAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
     )
-    
     print(response.status_code)
     if response.status_code == 200:
         print(response.json())
         result = response.json()
-        print(result)
         return jsonify({
             "success" : True,
             "address" : result['result']['address'],
@@ -1067,7 +1534,7 @@ def get_zephyr_balance():
             url,
             json=payload,
             headers=headers,
-            auth=RequestsAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
+            auth=HTTPDigestAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD)
         )
         result = response.json().get('result', {})
     except Exception as e:
@@ -1104,27 +1571,419 @@ def get_zephyr_balance():
         return jsonify({
             'success': False,
             'confirmations': 0,
-            'difference': -amount
+            'difference': amount
         })
 
     total_received = sum(tx['amount'] for tx in all_txs)
+    print(f"Total Received: {total_received}")
     total_received_decimal = total_received / 1e12
+    print(f"Total Received Decimal: {total_received_decimal}")
     difference = amount - total_received_decimal 
+    print(f"difference: {difference}")
     
     min_confirmations = min(tx['confirmations'] for tx in all_txs)
     success = total_received_decimal >= amount
-
+    print(f"Success: {success}")
     return jsonify({
         'success': success,
         'confirmations': min_confirmations,
         'difference': difference
     })
-        
 
-    
-    
+@app.route('/v1/zephyr/getallbalances', methods=['GET'])
+#@auth.login_required
+def get_zephyr_all_balances():
+    url = scrtxxs.ZEPHYRHOST
+    headers = {'Content-Type': 'application/json'}
+
+    all_balances = []
+
+    for asset in ['ZPH', 'ZSD', 'ZRS']:
+        response = requests.post(url, json={
+            "jsonrpc": "2.0",
+            "id": "0",
+            "method": "get_balance",
+            "params": {
+                "account_index": 0,
+                "asset_type": asset
+            }
+        }, headers=headers, auth=HTTPDigestAuth(scrtxxs.FIROUSER, scrtxxs.FIROPASSWORD))
+
+        result = response.json().get('result', {})
+        for bal in result.get('balances', []):
+            for sub in bal.get('per_subaddress', []):
+                all_balances.append({
+                    'index': sub['address_index'],
+                    'address': sub['address'],
+                    'asset_type': asset,
+                    'balance': sub['balance'] / 1e12,
+                    'label': sub.get('label', '')
+                })
+
+    return jsonify({'result': all_balances})
+
+        
 def UpdateMeileSubscriberDB():
     pass
 
 
+'''
+================================================================================
+Meile SMS (SMSPool) balance endpoints
+================================================================================
+The Meile GUI keeps a small USD "SMS balance" per app install. The install is
+identified by the anonymous UUID that is generated locally on first run
+(see PreLoadWindow.GenerateUUID in meile-gui/src/ui/screens.py).
+
+All of the SMS data lives in a dedicated MySQL database (`sms`) with three
+tables (see schema/sms_balances.sql, schema/sms_transactions.sql and
+schema/sms_orders.sql):
+
+    balances     -> one row per UUID, holds the current USD balance
+    transactions -> signed ledger of every credit/debit
+    orders       -> each SMS number that was purchased (for status/refunds)
+
+The markup applied on top of the SMSPool cost when a number is bought is
+defined by SMS_MARKUP_PERCENT below. Change it in one place and the GUI picks
+it up automatically because it is returned by the balance endpoints.
+'''
+
+SMS_DB = 'sms'
+
+# Percentage added on top of the raw SMSPool cost when a user buys a number.
+# e.g. a $0.20 number costs the user $0.20 * (1 + 5/100) = $0.21
+SMS_MARKUP_PERCENT = 5.0
+
+
+def GetSmsDB():
+    '''Open a connection to the dedicated `sms` MySQL database.
+
+    A separate pymysql connection (rather than the flaskext `mysql` object) is
+    used so the SMS data can live in its own database while still sharing the
+    same MySQL credentials.
+    '''
+    return pymysql.connect(
+        host=scrtxxs.MySQLHost,
+        port=int(scrtxxs.MySQLPort),
+        user=scrtxxs.MySQLUsername,
+        password=scrtxxs.MySQLPassword,
+        database=SMS_DB,
+        autocommit=False,
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+def _sms_locked_balance(cursor, uuid):
+    '''Return the current balance for uuid, creating a zero row if needed.
+
+    The row is locked (SELECT ... FOR UPDATE) so concurrent top-ups/purchases
+    for the same UUID cannot race.  Must be called inside an open transaction.
+    '''
+    cursor.execute("SELECT balance FROM balances WHERE uuid = %s FOR UPDATE", (uuid,))
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT INTO balances (uuid, balance) VALUES (%s, 0)", (uuid,))
+        return 0.0
+    return float(row['balance'])
+
+
+@app.route('/v1/sms/balance/<uuid>', methods=['GET'])
+@auth.login_required
+def get_sms_balance(uuid):
+    '''Return the SMS balance for a UUID.
+
+    Responds with HTTP 404 when no row exists so the GUI knows it has to call
+    /v1/sms/account to create one (first-time user).
+    '''
+    conn = GetSmsDB()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT uuid, balance FROM balances WHERE uuid = %s", (uuid,))
+            row = c.fetchone()
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Database error: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    if not row:
+        return jsonify({
+            'status': False,
+            'message': 'No balance found for UUID',
+            'uuid': uuid,
+            'balance': None,
+            'markup': SMS_MARKUP_PERCENT,
+        }), 404
+
+    return jsonify({
+        'status': True,
+        'uuid': row['uuid'],
+        'balance': float(row['balance']),
+        'markup': SMS_MARKUP_PERCENT,
+    })
+
+
+@app.route('/v1/sms/account', methods=['POST'])
+@auth.login_required
+def create_sms_account():
+    '''Create a zero balance row for a UUID (idempotent) and return it.
+
+    Called by the GUI the first time a user opens the SMS screen. If the UUID
+    already has a balance the existing row is returned untouched.
+    '''
+    try:
+        JSON = request.json
+        uuid = JSON['uuid']
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'uuid is required'}), 400
+
+    conn = GetSmsDB()
+    try:
+        conn.begin()
+        with conn.cursor() as c:
+            c.execute(
+                "INSERT INTO balances (uuid, balance) VALUES (%s, 0) "
+                "ON DUPLICATE KEY UPDATE uuid = uuid",
+                (uuid,))
+            c.execute("SELECT uuid, balance FROM balances WHERE uuid = %s", (uuid,))
+            row = c.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Database error: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    return jsonify({
+        'status': True,
+        'uuid': row['uuid'],
+        'balance': float(row['balance']),
+        'markup': SMS_MARKUP_PERCENT,
+    })
+
+
+@app.route('/v1/sms/topup', methods=['POST'])
+@auth.login_required
+def sms_topup():
+    '''Credit a user's SMS balance after a coin payment was received.
+
+    Expected JSON:
+        { "uuid": ..., "amount": 10.0, "denom": "USD",
+          "coin": "arrr", "address": "...", "txid": "..." }
+    '''
+    try:
+        JSON = request.json
+        uuid = JSON['uuid']
+        amount = float(JSON['amount'])
+        denom = JSON.get('denom', 'USD')
+        coin = JSON.get('coin')
+        address = JSON.get('address')
+        txid = JSON.get('txid')
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Invalid top-up request: %s' % str(e)}), 400
+
+    if amount <= 0:
+        return jsonify({'status': False, 'message': 'Top-up amount must be greater than zero'}), 400
+
+    conn = GetSmsDB()
+    try:
+        conn.begin()
+        with conn.cursor() as c:
+            old_balance = _sms_locked_balance(c, uuid)
+            new_balance = round(old_balance + amount, 6)
+            c.execute("UPDATE balances SET balance = %s WHERE uuid = %s", (new_balance, uuid))
+            c.execute(
+                "INSERT INTO transactions "
+                "(uuid, type, amount, balance_after, denom, coin, address, txid, status) "
+                "VALUES (%s, 'topup', %s, %s, %s, %s, %s, %s, 'complete')",
+                (uuid, amount, new_balance, denom, coin, address, txid))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Top-up failed: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    print(f"SMS top-up: uuid={uuid} amount={amount} {denom} coin={coin} -> balance={new_balance}")
+    return jsonify({
+        'status': True,
+        'uuid': uuid,
+        'balance': new_balance,
+        'amount': amount,
+        'markup': SMS_MARKUP_PERCENT,
+    })
+
+
+@app.route('/v1/sms/purchase', methods=['POST'])
+@auth.login_required
+def sms_purchase():
+    '''Debit the cost of a purchased SMS number (+ markup) from a user's balance.
+
+    Expected JSON:
+        { "uuid": ..., "order_id": "...", "country_id": 1, "country": "United States",
+          "service_id": 1, "service": "Telegram", "phone": "15551234",
+          "cost": 0.20, "expires_at": 1700000000 }
+
+    The amount charged is cost * (1 + SMS_MARKUP_PERCENT/100).  If the balance
+    is not sufficient nothing is written and status=False (with code
+    'insufficient_funds') is returned.
+    '''
+    try:
+        JSON = request.json
+        uuid = JSON['uuid']
+        order_id = str(JSON.get('order_id') or JSON.get('provider_order_id') or '')
+        country_id = JSON.get('country_id')
+        country = JSON.get('country')
+        service_id = JSON.get('service_id')
+        service = JSON.get('service')
+        phone = JSON.get('phone')
+        cost = float(JSON['cost'])
+        expires_at = JSON.get('expires_at')
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Invalid purchase request: %s' % str(e)}), 400
+
+    markup = SMS_MARKUP_PERCENT
+    total = round(cost * (1.0 + markup / 100.0), 6)
+
+    conn = GetSmsDB()
+    try:
+        conn.begin()
+        with conn.cursor() as c:
+            old_balance = _sms_locked_balance(c, uuid)
+            if old_balance < total:
+                conn.rollback()
+                return jsonify({
+                    'status': False,
+                    'code': 'insufficient_funds',
+                    'message': 'Insufficient SMS balance',
+                    'uuid': uuid,
+                    'balance': old_balance,
+                    'required': total,
+                    'markup': markup,
+                }), 402
+
+            new_balance = round(old_balance - total, 6)
+            c.execute("UPDATE balances SET balance = %s WHERE uuid = %s", (new_balance, uuid))
+            c.execute(
+                "INSERT INTO orders "
+                "(uuid, provider_order_id, country_id, country, service_id, service, "
+                " phone_number, cost, markup, total_charged, status, expires_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', "
+                " FROM_UNIXTIME(%s))",
+                (uuid, order_id, country_id, country, service_id, service,
+                 phone, cost, markup, total, expires_at if expires_at else None))
+            c.execute(
+                "INSERT INTO transactions "
+                "(uuid, type, amount, balance_after, denom, reference, status) "
+                "VALUES (%s, 'purchase', %s, %s, 'USD', %s, 'complete')",
+                (uuid, -total, new_balance, order_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Purchase failed: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    print(f"SMS purchase: uuid={uuid} order={order_id} cost={cost} charged={total} -> balance={new_balance}")
+    return jsonify({
+        'status': True,
+        'uuid': uuid,
+        'balance': new_balance,
+        'cost': cost,
+        'markup': markup,
+        'charged': total,
+        'order_id': order_id,
+    })
+
+
+@app.route('/v1/sms/refund', methods=['POST'])
+@auth.login_required
+def sms_refund():
+    '''Refund a purchased SMS number back to a user's balance.
+
+    Expected JSON:
+        { "uuid": ..., "order_id": "...", "amount": 0.21 }
+
+    `amount` is optional; when omitted the stored total_charged for the order is
+    used. An order can only be refunded once.
+    '''
+    try:
+        JSON = request.json
+        uuid = JSON['uuid']
+        order_id = str(JSON.get('order_id') or JSON.get('provider_order_id') or '')
+        amount = JSON.get('amount')
+    except Exception as e:
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Invalid refund request: %s' % str(e)}), 400
+
+    conn = GetSmsDB()
+    try:
+        conn.begin()
+        with conn.cursor() as c:
+            # Look the order up so we never refund twice and can fall back to
+            # the stored total when no explicit amount is supplied.
+            c.execute(
+                "SELECT id, total_charged, status FROM orders "
+                "WHERE uuid = %s AND provider_order_id = %s ORDER BY id DESC LIMIT 1 FOR UPDATE",
+                (uuid, order_id))
+            order = c.fetchone()
+
+            if order and order['status'] == 'refunded':
+                conn.rollback()
+                return jsonify({
+                    'status': False,
+                    'code': 'already_refunded',
+                    'message': 'Order was already refunded',
+                    'uuid': uuid,
+                }), 409
+
+            if amount is None:
+                if not order or order['total_charged'] is None:
+                    conn.rollback()
+                    return jsonify({
+                        'status': False,
+                        'message': 'No order found to refund and no amount supplied',
+                        'uuid': uuid,
+                    }), 404
+                amount = float(order['total_charged'])
+            else:
+                amount = float(amount)
+
+            old_balance = _sms_locked_balance(c, uuid)
+            new_balance = round(old_balance + amount, 6)
+            c.execute("UPDATE balances SET balance = %s WHERE uuid = %s", (new_balance, uuid))
+            c.execute(
+                "UPDATE orders SET status = 'refunded', cancelled_at = NOW() "
+                "WHERE uuid = %s AND provider_order_id = %s",
+                (uuid, order_id))
+            c.execute(
+                "INSERT INTO transactions "
+                "(uuid, type, amount, balance_after, denom, reference, status) "
+                "VALUES (%s, 'refund', %s, %s, 'USD', %s, 'complete')",
+                (uuid, amount, new_balance, order_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(str(e))
+        return jsonify({'status': False, 'message': 'Refund failed: %s' % str(e)}), 500
+    finally:
+        conn.close()
+
+    print(f"SMS refund: uuid={uuid} order={order_id} amount={amount} -> balance={new_balance}")
+    return jsonify({
+        'status': True,
+        'uuid': uuid,
+        'balance': new_balance,
+        'amount': amount,
+        'order_id': order_id,
+    })
+
+
 db.create_all()
+
