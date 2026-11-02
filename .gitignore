@@ -143,6 +143,11 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# Meile Plan API
+zano_lookup.json
+zano_lookup.json.tmp
+zano_lookup.json.lock
+
 # Pyre type checker
 .pyre/
 

@@ -2,6 +2,10 @@ import os
 import jwt
 import time
 import pexpect
+import fcntl
+import secrets
+import threading
+from contextlib import contextmanager
 from urllib.parse import urlparse
 from os import path
 import json
@@ -37,7 +41,7 @@ import pymysql
 import pymysql.cursors
 
 
-VERSION=20260625.1438
+VERSION=20261101.1942
 
 GRPC = scrtxxs.GRPC_DEV
 
@@ -996,9 +1000,241 @@ def get_zano_txs():
                         'height' : None})
 '''
     
+# Zano only accepts an 8 byte payment id, which a Meile wallet address is too
+# long to be, so a random 8 byte id is issued per wallet address.  The ids are
+# held in a lookup table in the working directory, keyed by the wallet address,
+# so that /v1/zano/getaddress and /v1/zano/gettxs agree on the value.
+ZANO_LOOKUP_FILENAME = 'zano_lookup.json'
+
+zano_lookup_lock = threading.Lock()
+
+
+def zano_lookup_path():
+    '''Path of the Zano payment id lookup table (working directory).'''
+    return path.join(os.getcwd(), ZANO_LOOKUP_FILENAME)
+
+
+@contextmanager
+def zano_lookup_write_lock():
+    '''
+    Exclusive lock for a read-modify-write of the payment id lookup table.
+
+    run-meile-rest.sh starts the API with 6 uWSGI processes, so a threading
+    lock is not enough on its own: two processes could load, change and save
+    the table at the same moment and one of the two mappings would be lost -
+    the next call would then hand out a different payment id for an address
+    that already had one.  The lock file next to the table makes the sequence
+    exclusive across processes as well as threads.
+    '''
+    with zano_lookup_lock:
+        lock_file = None
+
+        try:
+            lock_file = open(f'{zano_lookup_path()}.lock', 'a')
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        except Exception as e:
+            # This is only a lock, so keep going rather than failing the call
+            print(str(e))
+
+        try:
+            yield
+        finally:
+            if lock_file is not None:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+                lock_file.close()
+
+
+def load_zano_lookup():
+    '''Return the wallet address -> payment id table, empty when absent.'''
+    try:
+        with open(zano_lookup_path(), 'r') as lookup_file:
+            lookup = json.load(lookup_file)
+
+        if isinstance(lookup, dict):
+            return lookup
+
+        print('Zano lookup table is not a JSON object, starting a new one')
+
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(str(e))
+
+    return {}
+
+
+def save_zano_lookup(lookup):
+    '''Write the lookup table, replacing the file in a single step.'''
+    lookup_path = zano_lookup_path()
+    temp_path = f'{lookup_path}.tmp'
+
+    with open(temp_path, 'w') as lookup_file:
+        json.dump(lookup, lookup_file, indent=4, sort_keys=True)
+
+    os.replace(temp_path, lookup_path)
+
+
+def get_zano_payment_id(address):
+    '''Payment id already issued for address, or None when there is none.'''
+    return load_zano_lookup().get(address)
+
+
+def get_or_create_zano_payment_id(address):
+    '''
+    Return the 8 byte hex payment id issued for a Meile wallet address.
+
+    secrets.token_hex(8) gives the 16 hex characters (8 bytes) Zano wants.  An
+    address is only ever given one id, and it is stored in zano_lookup.json so
+    that later calls - and /v1/zano/gettxs - see the same value.
+    '''
+    with zano_lookup_write_lock():
+        lookup = load_zano_lookup()
+
+        payment_id = lookup.get(address)
+
+        if payment_id:
+            return payment_id
+
+        payment_id = secrets.token_hex(8)
+
+        while payment_id in lookup.values():
+            payment_id = secrets.token_hex(8)
+
+        lookup[address] = payment_id
+        save_zano_lookup(lookup)
+
+        print(f'Zano payment id for {address}: {payment_id}')
+
+        return payment_id
+
+
+def normalize_zano_payment_id(payment_id):
+    '''
+    Normalise a payment id so that two of them can be compared byte for byte.
+
+    Zano echoes payment ids as lower case hex, and a wallet may leave off a 0x
+    prefix or leading zeros, so both sides of the comparison are put in the
+    same shape first.
+    '''
+    if not payment_id:
+        return ''
+
+    return str(payment_id).lower().replace('0x', '').lstrip('0')
+
+
+@app.route('/v1/zano/getaddress', methods=['POST'])
+@auth.login_required
+def get_zano_address():
+    '''
+    Build a Zano integrated address (standard wallet address + payment id)
+    for the caller supplied Meile wallet address.
+
+    Zano requires the payment id to be 8 bytes of hex, so the Meile wallet
+    address is mapped to a random 8 byte id kept in zano_lookup.json and that
+    id is what goes into the integrated address.  An incoming payment carries
+    it back as the transaction payment_id, which is what /v1/zano/gettxs
+    matches on.
+    '''
+    try:
+        body = request.get_json(force=True)
+
+        address = body.get('address')
+
+        if not address:
+            return jsonify({
+                'result': None,
+                'error': 'Missing address',
+            }), 400
+
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': None,
+            'error': 'Invalid JSON request',
+        }), 400
+
+    try:
+        payment_id = get_or_create_zano_payment_id(address)
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': None,
+            'error': f'Could not store payment id: {e}',
+        }), 500
+
+    url = scrtxxs.ZANOHOST
+
+    headers = {
+        'Content-Type': 'application/json',
+    }
+
+    data = {
+        'id': 0,
+        'jsonrpc': '2.0',
+        'method': 'make_integrated_address',
+        'params': {
+            'payment_id': payment_id,
+        },
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=data,
+            headers=headers,
+            timeout=20,
+        )
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': None,
+            'error': str(e),
+        }), 500
+
+    if response.status_code != 200:
+        return jsonify({
+            'result': None,
+            'error': response.status_code,
+        }), response.status_code
+
+    try:
+        rpc_response = response.json()
+    except Exception as e:
+        print(str(e))
+        return jsonify({
+            'result': None,
+            'error': 'Invalid JSON response from Zano RPC',
+        }), 500
+
+    result = rpc_response.get('result', {}) or {}
+    integrated_address = result.get('integrated_address')
+
+    print(f'Address: {address}')
+    print(f'Payment ID: {payment_id}')
+    print(f'Integrated Address: {integrated_address}')
+
+    if not integrated_address:
+        return jsonify({
+            'result': None,
+            'error': rpc_response.get('error', 'Missing integrated address'),
+        }), 500
+
+    return jsonify({
+        'result': integrated_address,
+        'payment_id': result.get('payment_id', payment_id),
+    })
+
+
 @app.route('/v1/zano/gettxs', methods=['POST'])
 @auth.login_required
 def get_zano_txs():
+    '''
+    Total received for a Meile wallet address, in the requested asset.
+
+    The address is resolved to the 8 byte payment id that
+    /v1/zano/getaddress issued for it, and incoming transactions are matched
+    on their payment_id, because that is what the integrated address carries.
+    '''
     ASSETS = {
         'zano': {
             'asset_id': 'd6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a',
@@ -1069,6 +1305,16 @@ def get_zano_txs():
     asset_id = ASSETS[coin]['asset_id']
     divisor = ASSETS[coin]['divisor']
 
+    expected_payment_id = normalize_zano_payment_id(get_zano_payment_id(address))
+
+    if not expected_payment_id:
+        print(f'No Zano payment id has been issued for {address} yet')
+        return jsonify({
+            'result': 0.0,
+            'height': None,
+            'error': None,
+        })
+
     url = scrtxxs.ZANOHOST
 
     headers = {
@@ -1134,14 +1380,15 @@ def get_zano_txs():
 
         print(f'Height: {height}')
         print(f'Address: {address}')
+        print(f'Payment ID: {expected_payment_id}')
         print(f'Coin: {coin}')
         print(f'Asset ID: {asset_id}')
 
         for tx in transfers:
-            tx_comment = tx.get('comment')
+            tx_payment_id = normalize_zano_payment_id(tx.get('payment_id'))
             current_tx_height = tx.get('height', 0)
 
-            if tx_comment != address:
+            if tx_payment_id != expected_payment_id:
                 continue
 
             if height is not None:
